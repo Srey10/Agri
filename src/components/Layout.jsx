@@ -37,7 +37,7 @@ export default function Layout({ user, onLogout }) {
         <div className="sidebar-logo">
           <div className="logo-icon">🌾</div>
           <div>
-            <div className="logo-title">AgroVista<span>GIS</span></div>
+            <div className="logo-title">AgriSense</div>
           </div>
         </div>
 

@@ -1,6 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
 import { Send, Mic, Camera, BookOpen, Users, Sun, Leaf, Languages } from 'lucide-react'
+import { GoogleGenerativeAI } from '@google/generative-ai'
 import './KnowledgeHub.css'
+
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
 
 const LANGS = {
   en: 'English', hi: 'हिंदी', pa: 'ਪੰਜਾਬੀ', mr: 'मराठी',
@@ -68,14 +72,40 @@ export default function KnowledgeHub({ user }) {
   }, [lang])
 
   const sendMessage = async (text) => {
-    if (!text.trim()) return
-    setMessages(m => [...m, { role: 'user', text }])
-    setInput('')
-    setLoading(true)
-    await new Promise(r => setTimeout(r, 1200))
-    const resp = aiResponses[Math.floor(Math.random() * aiResponses.length)]
-    setMessages(m => [...m, { role: 'ai', text: resp[lang] || resp.en }])
-    setLoading(false)
+    if (!text.trim()) return;
+    setMessages(m => [...m, { role: 'user', text }]);
+    setInput('');
+    setLoading(true);
+    
+    try {
+      if (!genAI) {
+        throw new Error("API key is missing or not configured correctly.");
+      }
+
+      // Convert local state to Gemini history format, ignoring initial greetings as they don't matter much and can clutter context
+      const historyItems = messages
+        .filter(m => m.text !== TRANSLATIONS.greeting[lang] && m.text !== TRANSLATIONS.greeting.en)
+        .map(m => ({
+          role: m.role === 'ai' ? 'model' : 'user',
+          parts: [{ text: m.text }],
+        }));
+
+      const model = genAI.getGenerativeModel({
+        model: "gemini-2.5-flash", 
+        systemInstruction: `You are AgriAdvisor, an expert AI agricultural advisor specifically tailored for farming in India. The current selected language is ${LANGS[lang] || 'English'}. Keep your answers relatively short, professional, and directly related to agriculture, crops, pests, irrigation, or weather. Format your text nicely using markdown formatting where appropriate.`
+      });
+
+      const chatSession = model.startChat({ history: historyItems });
+      const result = await chatSession.sendMessage(text);
+      const aiResponseText = result.response.text();
+
+      setMessages(m => [...m, { role: 'ai', text: aiResponseText }]);
+    } catch (error) {
+      console.error(error);
+      setMessages(m => [...m, { role: 'ai', text: `Sorry, I am facing a technical issue. (${error.message})` }]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
