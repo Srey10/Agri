@@ -4,18 +4,18 @@ import { Package, AlertTriangle, CheckCircle, Clock, TrendingUp } from 'lucide-r
 import './Traceability.css'
 
 const batches = [
-  { id: '#TR-902', name: 'Golden Wheat', variety: 'DBW-222', status: 'IN TRANSIT', harvested: '13 Oct 2025', from: 'Farm Block – Ludhiana, Punjab', to: 'Regional Hub – Chandigarh', weight: 45, quality: 'A+', temp: 18.4, humidity: 62 },
-  { id: '#TR-881', name: 'Basmati Rice', variety: 'Pusa-1121', status: 'QUALITY CHECK', harvested: '11 Oct 2025', from: 'Farm Block – Karnal, Haryana', to: 'Processing Unit – Panipat', weight: 28, quality: 'A+', temp: 17.2, humidity: 58 },
-  { id: '#TR-772', name: 'Organic Sugarcane', variety: 'CoS-9301', status: 'DELIVERED', harvested: '8 Oct 2025', from: 'Farm Block – Meerut, U.P.', to: 'Sugar Mill – Muzaffarnagar', weight: 120, quality: 'A', temp: 22.1, humidity: 70 },
-  { id: '#TR-655', name: 'Cotton (कपास)', variety: 'Bt-Cotton', status: 'HARVEST READY', harvested: '15 Oct 2025', from: 'Farm Block – Akola, Maharashtra', to: 'Pending Assignment', weight: 32, quality: 'B+', temp: 24.5, humidity: 55 },
+  { id: '#MPS-2024-11', name: 'Sugarcane – Ratoon Crop', variety: 'Co-86032', status: 'IN TRANSIT', harvested: '13 Apr 2026', from: 'Mote Patil Sugarcane Farms, Maharashtra', to: 'Shri Chhatrapati Sugar Mill – Nashik', weight: 48, quality: 'A+', temp: 22.4, humidity: 64 },
+  { id: '#MPS-2024-09', name: 'Sugarcane – Plant Crop', variety: 'CoM-0265', status: 'QUALITY CHECK', harvested: '28 Mar 2026', from: 'Mote Patil Sugarcane Farms, Maharashtra', to: 'Processing Unit – Sinnar', weight: 62, quality: 'A+', temp: 21.8, humidity: 61 },
+  { id: '#MPS-2024-07', name: 'Sugarcane – Seed Setts', variety: 'Co-86032', status: 'DELIVERED', harvested: '10 Mar 2026', from: 'Mote Patil Sugarcane Farms, Maharashtra', to: 'Nashik Agri Depot – Nashik', weight: 18, quality: 'A', temp: 20.5, humidity: 58 },
+  { id: '#MPS-2024-05', name: 'Sugarcane Juice Extract', variety: 'CoS-9301', status: 'HARVEST READY', harvested: '20 Apr 2026', from: 'Mote Patil Sugarcane Farms, Maharashtra', to: 'Pending Assignment', weight: 35, quality: 'B+', temp: 24.1, humidity: 66 },
 ]
 
-// Route path: Ludhiana → Chandigarh
+// Route: Mote Patil Farm → Nashik Sugar Mill (approximate)
 const routePath = [
-  [30.9010, 75.8573], [30.9500, 76.0000], [31.0000, 76.3000], [30.7334, 76.7794]
+  [19.4308, 74.9010], [19.5000, 74.9500], [19.6000, 74.9800], [19.9975, 73.7898]
 ]
 
-const routeDeviation = [[30.9500, 76.0000], [30.9700, 76.1500], [30.9600, 76.2000], [31.0000, 76.3000]]
+const routeDeviation = [[19.5000, 74.9500], [19.5200, 75.0200], [19.5800, 74.9900], [19.6000, 74.9800]]
 
 const statusColor = { 'IN TRANSIT': '#3b82f6', 'QUALITY CHECK': '#f97316', 'DELIVERED': '#22c55e', 'HARVEST READY': '#eab308' }
 
@@ -45,7 +45,7 @@ export default function Traceability() {
         </div>
         <div className="health-item">
           <span className="dot dot-green pulse"></span>
-          <span>Blockchain: Ludhiana Node-08 Active</span>
+          <span>Blockchain: MPS-Node-01 Active · Maharashtra</span>
         </div>
         <div className="health-item">
           <Clock size={14} className="text-muted" />
@@ -88,21 +88,21 @@ export default function Traceability() {
               </div>
               <div className="badge badge-blue pulse">LIVE GPS</div>
             </div>
-            <MapContainer center={[30.9010, 75.8573]} zoom={8} style={{ height: 300 }}>
+            <MapContainer center={[19.4308, 74.9010]} zoom={8} style={{ height: 300 }}>
               <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="© OpenStreetMap" opacity={0.85} />
               <Polyline positions={routePath} pathOptions={{ color: '#22c55e', weight: 4 }} />
               {selected.status === 'IN TRANSIT' && (
                 <>
                   <Polyline positions={routeDeviation} pathOptions={{ color: '#f97316', weight: 3, dashArray: '8,4' }} />
-                  <CircleMarker center={[30.9700, 76.1500]} radius={12} pathOptions={{ color: '#fff', weight: 2, fillColor: '#f97316', fillOpacity: 1 }}>
-                    <Popup><strong>⚠️ Route Deviation Detected</strong><br />Batch moved 4.2km outside planned corridor</Popup>
+                  <CircleMarker center={[19.5200, 75.0200]} radius={12} pathOptions={{ color: '#fff', weight: 2, fillColor: '#f97316', fillOpacity: 1 }}>
+                    <Popup><strong>⚠️ Route Deviation Detected</strong><br />Batch moved 3.8km outside planned corridor</Popup>
                   </CircleMarker>
                 </>
               )}
-              <CircleMarker center={[30.9010, 75.8573]} radius={10} pathOptions={{ color: '#fff', weight: 2, fillColor: '#22c55e', fillOpacity: 1 }}>
-                <Popup>🟢 Departure: {selected.from}</Popup>
+              <CircleMarker center={[19.4308, 74.9010]} radius={10} pathOptions={{ color: '#fff', weight: 2, fillColor: '#22c55e', fillOpacity: 1 }}>
+                <Popup>🟢 Departure: Mote Patil Sugarcane Farms</Popup>
               </CircleMarker>
-              <CircleMarker center={[30.7334, 76.7794]} radius={10} pathOptions={{ color: '#fff', weight: 2, fillColor: '#3b82f6', fillOpacity: 1 }}>
+              <CircleMarker center={[19.9975, 73.7898]} radius={10} pathOptions={{ color: '#fff', weight: 2, fillColor: '#3b82f6', fillOpacity: 1 }}>
                 <Popup>🔵 Destination: {selected.to}</Popup>
               </CircleMarker>
             </MapContainer>

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Send, Mic, Camera, BookOpen, Users, Sun, Leaf, Languages } from 'lucide-react'
+import { Send, Mic, BookOpen, Users, Languages, ChevronDown, ChevronUp } from 'lucide-react'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import './KnowledgeHub.css'
 
@@ -43,15 +43,50 @@ const aiResponses = [
 ]
 
 const expertGuides = [
-  { title: 'Preparing for Kharif Sowing: Soil Enrichment Steps', tag: 'SEASONAL GUIDE', author: 'Lead Agronomist', time: '2 days ago', emoji: '🌱' },
-  { title: 'Managing Water Logging in Lower Punjab Fields', tag: 'FIELD ADVISORY', author: 'Dr. Sanjay Verma', time: '5 days ago', emoji: '💧' },
-  { title: 'MSP Update 2025: Wheat & Paddy Prices', tag: 'GOVERNMENT ALERT', author: 'Ministry of Agriculture', time: '1 week ago', emoji: '📋' },
+  { title: 'Preparing for Kharif Sowing: Soil Enrichment for Sugarcane', tag: 'SEASONAL GUIDE', author: 'Lead Agronomist', time: '2 days ago', emoji: '🌱' },
+  { title: 'Managing Moisture Stress in Maharashtra Sugarcane Fields', tag: 'FIELD ADVISORY', author: 'Dr. Sanjay Verma', time: '5 days ago', emoji: '💧' },
+  { title: 'MSP Update 2025: Sugarcane FRP & State SAP Prices', tag: 'GOVERNMENT ALERT', author: 'Ministry of Agriculture', time: '1 week ago', emoji: '📋' },
 ]
 
 const forumPosts = [
-  { title: 'Best fertilizer for monsoon wheat?', tag: 'CROP MANAGEMENT', replies: 16, users: ['A', 'B', 'C'] },
-  { title: 'Shared tractor rental in South Field – anyone interested?', tag: 'LOGISTICS', replies: 12, users: ['D', 'E'] },
-  { title: 'Pest spotted in Block C – white flies on cotton', tag: 'PEST ALERT', replies: 8, users: ['F', 'G', 'H'] },
+  {
+    title: 'Best fertilizer for sugarcane in Maharashtra?',
+    tag: 'CROP MANAGEMENT',
+    tagColor: 'rgba(45,122,58,0.15)',
+    tagText: 'var(--green-accent)',
+    replies: 16,
+    users: ['A', 'B', 'C'],
+    discussion: [
+      { user: 'Ramesh P.', avatar: 'R', time: '2h ago', text: 'I use 12:32:16 NPK at planting, then urea top-dress at 45 and 90 days. Works well for Co-86032.' },
+      { user: 'Suresh M.', avatar: 'S', time: '3h ago', text: 'Potassium sulphate at 50 kg/ha during grand growth phase really improved my yield last season.' },
+      { user: 'Vijay K.', avatar: 'V', time: '5h ago', text: 'Don\'t forget micronutrients — zinc sulphate 25 kg/ha at tillering stage. Many farmers skip this.' },
+    ]
+  },
+  {
+    title: 'Shared tractor rental near Nashik – anyone interested?',
+    tag: 'LOGISTICS',
+    tagColor: 'rgba(59,130,246,0.1)',
+    tagText: 'var(--blue)',
+    replies: 12,
+    users: ['D', 'E'],
+    discussion: [
+      { user: 'Anil D.', avatar: 'A', time: '1h ago', text: 'I have a Mahindra 575 available on weekends. Can share for ₹800/hour. Contact me.' },
+      { user: 'Priya E.', avatar: 'P', time: '4h ago', text: 'Interested! I need it for intercultivation in my sugarcane field next Saturday.' },
+    ]
+  },
+  {
+    title: 'Red rot symptoms spotted in Zone 3 – help needed',
+    tag: 'PEST ALERT',
+    tagColor: 'rgba(239,68,68,0.1)',
+    tagText: 'var(--red)',
+    replies: 8,
+    users: ['F', 'G', 'H'],
+    discussion: [
+      { user: 'Mohan F.', avatar: 'M', time: '30m ago', text: 'Seeing red discolouration with white patches inside the stalk. Classic red rot signs.' },
+      { user: 'Dr. G. Patil', avatar: 'G', time: '1h ago', text: 'Remove and destroy infected stalks immediately. Apply Carbendazim 0.1% as drench. Do not use infected setts for next planting.' },
+      { user: 'Harish H.', avatar: 'H', time: '2h ago', text: 'Same issue last year. Hot water treatment of setts at 50°C for 2 hours before planting prevents it.' },
+    ]
+  },
 ]
 
 export default function KnowledgeHub({ user }) {
@@ -61,6 +96,7 @@ export default function KnowledgeHub({ user }) {
   ])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [expandedForum, setExpandedForum] = useState(null)
   const chatEndRef = useRef(null)
 
   useEffect(() => {
@@ -180,58 +216,65 @@ export default function KnowledgeHub({ user }) {
 
         {/* Right Panel */}
         <div className="kh-right-col">
-          {/* Expert Advisory */}
-          <div className="card">
-            <div className="card-section-title"><BookOpen size={13} /> Expert Advisory</div>
-            <div className="expert-guides">
-              {expertGuides.map((g, i) => (
-                <div key={i} className="expert-guide card-hover" style={{ padding: 12, background: 'var(--bg-card2)', borderRadius: 8, cursor: 'pointer', marginBottom: 10, border: '1px solid var(--border)' }}>
-                  <div className="guide-emoji">{g.emoji}</div>
-                  <div className="badge badge-orange" style={{ fontSize: 9, marginTop: 6 }}>{g.tag}</div>
-                  <div className="guide-title">{g.title}</div>
-                  <div className="guide-meta">Updated {g.time} • {g.author}</div>
-                </div>
-              ))}
-            </div>
-          </div>
 
-          {/* Forum */}
+          {/* Farmer Forum — expandable */}
           <div className="card" style={{ marginTop: 14 }}>
             <div className="kh-forum-header">
               <div className="card-section-title" style={{ margin: 0 }}><Users size={13} /> Farmer Forum</div>
               <button className="btn-ghost" style={{ fontSize: 11 }}>View All</button>
             </div>
             <div className="forum-posts">
-              {forumPosts.map((p, i) => (
-                <div key={i} className="forum-post">
-                  <div className="forum-tag" style={{ background: i === 0 ? 'rgba(45,122,58,0.15)' : i === 2 ? 'rgba(239,68,68,0.1)' : 'rgba(59,130,246,0.1)', color: i === 0 ? 'var(--green-accent)' : i === 2 ? 'var(--red)' : 'var(--blue)' }}>{p.tag}</div>
-                  <div className="forum-title">{p.title}</div>
-                  <div className="forum-meta">
-                    <div className="forum-users">{p.users.map(u => <div key={u} className="forum-user-dot">{u}</div>)}</div>
-                    <div className="forum-replies">💬 {p.replies} replies</div>
+              {forumPosts.map((p, i) => {
+                const isOpen = expandedForum === i
+                return (
+                  <div key={i} className={`forum-post ${isOpen ? 'forum-post-open' : ''}`}>
+                    {/* Header row — always visible, click to toggle */}
+                    <div className="forum-post-header" onClick={() => setExpandedForum(isOpen ? null : i)}>
+                      <div>
+                        <div className="forum-tag" style={{ background: p.tagColor, color: p.tagText }}>{p.tag}</div>
+                        <div className="forum-title">{p.title}</div>
+                        <div className="forum-meta">
+                          <div className="forum-users">{p.users.map(u => <div key={u} className="forum-user-dot">{u}</div>)}</div>
+                          <div className="forum-replies">💬 {p.replies} replies</div>
+                        </div>
+                      </div>
+                      <div className="forum-chevron">
+                        {isOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                      </div>
+                    </div>
+
+                    {/* Expandable discussion */}
+                    <div className={`forum-discussion ${isOpen ? 'open' : ''}`}>
+                      <div className="forum-discussion-inner">
+                        {p.discussion.map((d, j) => (
+                          <div key={j} className="forum-comment">
+                            <div className="forum-comment-avatar">{d.avatar}</div>
+                            <div className="forum-comment-body">
+                              <div className="forum-comment-meta">
+                                <span className="forum-comment-user">{d.user}</span>
+                                <span className="forum-comment-time">{d.time}</span>
+                              </div>
+                              <div className="forum-comment-text">{d.text}</div>
+                            </div>
+                          </div>
+                        ))}
+                        <div className="forum-reply-input">
+                          <input className="input" style={{ fontSize: 11, padding: '6px 10px' }} placeholder="Add a reply..." />
+                          <button className="btn-primary" style={{ fontSize: 11, padding: '6px 12px' }}>Reply</button>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
 
           {/* Quick Actions */}
-          <div className="card" style={{ marginTop: 14 }}>
-            <div className="card-section-title">Quick Actions</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              {[
-                { icon: '☁️', label: 'Weather' }, { icon: '🔍', label: 'Scan Crop' },
-                { icon: '💰', label: 'Mandi Price' }, { icon: '📞', label: 'Call Expert' },
-              ].map(a => (
-                <button key={a.label} className="quick-action-btn">
-                  <span style={{ fontSize: 22 }}>{a.icon}</span>
-                  <span>{a.label}</span>
-                </button>
-              ))}
-            </div>
+          
           </div>
         </div>
       </div>
-    </div>
+    
   )
 }

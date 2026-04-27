@@ -22,7 +22,7 @@ export default function Login({ onLogin }) {
     } else {
       // Demo login
       if (form.email === 'arjun@agrovista.in' && form.password === 'farm@123') {
-        onLogin({ name: 'Arjun Sharma', email: form.email, field: 'FU-04-B • Punjab', role: 'Agronomist' })
+        onLogin({ name: 'Arjun Sharma', email: form.email, field: 'MPS-01 • Maharashtra', role: 'Agronomist' })
       } else {
         setError('Invalid credentials. Try arjun@agrovista.in / farm@123')
       }

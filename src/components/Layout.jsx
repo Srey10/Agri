@@ -1,15 +1,14 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
-import { LayoutDashboard, Map, Droplets, Package, BookOpen, ShoppingCart, Settings, HelpCircle, LogOut, Bell, Languages, Mic, Plus, ChevronDown, User } from 'lucide-react'
+import { LayoutDashboard, Map, Droplets, Package, BookOpen, ShoppingCart, Settings, HelpCircle, LogOut, Bell, Languages, Mic, Plus, ChevronDown, Microscope } from 'lucide-react'
 import './Layout.css'
 
 const navItems = [
-  { path: '/', icon: LayoutDashboard, label: 'Command Center', exact: true },
+  { path: '/', icon: LayoutDashboard, label: 'Dashboard', exact: true },
   { path: '/gis', icon: Map, label: 'GIS Mapping' },
   { path: '/irrigation', icon: Droplets, label: 'Irrigation & Climate' },
-  { path: '/traceability', icon: Package, label: 'Traceability' },
   { path: '/knowledge', icon: BookOpen, label: 'Knowledge Hub' },
-  { path: '/marketplace', icon: ShoppingCart, label: 'Market & Logistics' },
+  { path: '/crop-disease', icon: Microscope, label: 'Crop Disease' },
 ]
 
 const languages = [
@@ -51,7 +50,7 @@ export default function Layout({ user, onLogout }) {
 
         <div className="sidebar-field">
           <div className="field-label">Field Unit</div>
-          <div className="field-id">{user.field || 'FU-04-B • Punjab'}</div>
+          <div className="field-id">{user.field || 'MPS-01 • Maharashtra'}</div>
         </div>
 
         <nav className="sidebar-nav">

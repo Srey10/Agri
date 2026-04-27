@@ -82,3 +82,43 @@
   background: var(--bg-card2); cursor: pointer; transition: var(--transition); font-size: 12px; color: var(--text-secondary); font-family: 'Inter'; font-weight: 600;
 }
 .quick-action-btn:hover { border-color: var(--green-accent); color: var(--green-accent); background: rgba(45,122,58,0.08); }
+
+/* Forum expand/collapse */
+.forum-post { padding: 10px; background: var(--bg-card2); border-radius: 8px; border: 1px solid var(--border); transition: border-color 0.2s ease; overflow: hidden; }
+.forum-post:hover { border-color: var(--green-primary); }
+.forum-post-open { border-color: var(--green-primary); }
+
+.forum-post-header { display: flex; justify-content: space-between; align-items: flex-start; cursor: pointer; gap: 8px; }
+.forum-chevron { color: var(--text-muted); flex-shrink: 0; margin-top: 2px; transition: transform 0.2s ease; }
+.forum-post-open .forum-chevron { transform: rotate(0deg); color: var(--green-accent); }
+
+/* Smooth expand animation */
+.forum-discussion {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.35s ease, opacity 0.25s ease;
+  opacity: 0;
+}
+.forum-discussion.open {
+  max-height: 600px;
+  opacity: 1;
+}
+.forum-discussion-inner { padding-top: 12px; border-top: 1px solid var(--border); margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+
+/* Comments */
+.forum-comment { display: flex; gap: 8px; align-items: flex-start; }
+.forum-comment-avatar {
+  width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+  background: linear-gradient(135deg, var(--green-primary), var(--green-light));
+  font-size: 11px; font-weight: 700; color: white;
+  display: flex; align-items: center; justify-content: center;
+}
+.forum-comment-body { flex: 1; }
+.forum-comment-meta { display: flex; gap: 8px; align-items: center; margin-bottom: 3px; }
+.forum-comment-user { font-size: 11px; font-weight: 700; color: var(--text-primary); }
+.forum-comment-time { font-size: 10px; color: var(--text-muted); }
+.forum-comment-text { font-size: 11px; color: var(--text-secondary); line-height: 1.5; }
+
+/* Reply input */
+.forum-reply-input { display: flex; gap: 6px; margin-top: 4px; }
+.forum-reply-input .input { flex: 1; }

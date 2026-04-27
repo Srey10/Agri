@@ -192,3 +192,9 @@
 @media (max-width: 520px) {
   .irr-stats { grid-template-columns: 1fr; }
 }
+
+/* Rain day highlight in forecast */
+.forecast-rain-day {
+  border-color: rgba(59,130,246,0.4);
+  background: rgba(59,130,246,0.06);
+}

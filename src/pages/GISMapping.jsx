@@ -1,134 +1,280 @@
-import { useState } from 'react'
-import { MapContainer, TileLayer, CircleMarker, Popup, Marker, Polyline } from 'react-leaflet'
-import L from 'leaflet'
-import { Layers, Navigation, Search, Filter, ZoomIn, ZoomOut } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import * as turf from '@turf/turf'
+import MapView from '../components/MapView'
+import { Layers, Activity, Droplets, Leaf } from 'lucide-react'
 import './GISMapping.css'
 
-const allFields = [
-  { id: 'FU-04-B', lat: 30.9010, lng: 75.8573, crop: 'Wheat (गेहूं)', area: 42, ndvi: 0.74, moisture: 34, state: 'Punjab', dist: 'Ludhiana', status: 'active', color: '#22c55e' },
-  { id: 'FU-05-C', lat: 28.8800, lng: 76.9000, crop: 'Paddy (धान)', area: 28, ndvi: 0.82, moisture: 72, state: 'Haryana', dist: 'Karnal', status: 'irrigated', color: '#3b82f6' },
-  { id: 'FU-06-A', lat: 28.9700, lng: 77.7000, crop: 'Sugarcane (गन्ना)', area: 35, ndvi: 0.61, moisture: 28, state: 'U.P.', dist: 'Meerut', status: 'drought', color: '#f97316' },
-  { id: 'FU-07-D', lat: 26.4500, lng: 74.6300, crop: 'Mustard (सरसों)', area: 56, ndvi: 0.68, moisture: 42, state: 'Rajasthan', dist: 'Ajmer', status: 'active', color: '#eab308' },
-  { id: 'FU-08-E', lat: 20.7400, lng: 77.0000, crop: 'Cotton (कपास)', area: 31, ndvi: 0.71, moisture: 55, state: 'Maharashtra', dist: 'Akola', status: 'active', color: '#22c55e' },
-  { id: 'FU-09-F', lat: 15.5200, lng: 75.0200, crop: 'Sugarcane (गन्ना)', area: 19, ndvi: 0.88, moisture: 68, state: 'Karnataka', dist: 'Hubli', status: 'irrigated', color: '#3b82f6' },
-  { id: 'FU-10-G', lat: 10.9600, lng: 78.0800, crop: 'Rice (चावल)', area: 24, ndvi: 0.79, moisture: 78, state: 'Tamil Nadu', dist: 'Trichy', status: 'active', color: '#22c55e' },
-  { id: 'FU-11-H', lat: 22.5726, lng: 88.3639, crop: 'Jute (जूट)', area: 18, ndvi: 0.65, moisture: 62, state: 'W. Bengal', dist: 'Kolkata', status: 'active', color: '#14b8a6' },
+// Farm boundary: Mote Patil Sugarcane Farms, Maharashtra
+// Traced from satellite imagery at 19.430895, 74.900874
+// The farm has a diagonal NW road boundary and is ~8-10 hectares
+export const FARM_BOUNDARY = {
+  type: 'Feature',
+  properties: { name: 'Mote Patil Sugarcane Farms' },
+  geometry: {
+    type: 'Polygon',
+    coordinates: [[
+      [74.8985, 19.4330],   // NW corner (along diagonal road)
+      [74.9010, 19.4345],   // North tip
+      [74.9045, 19.4340],   // NE corner
+      [74.9055, 19.4315],   // East
+      [74.9050, 19.4285],   // SE corner
+      [74.9020, 19.4270],   // South
+      [74.8990, 19.4275],   // SW corner
+      [74.8975, 19.4300],   // West
+      [74.8985, 19.4330],   // close ring
+    ]]
+  }
+}
+
+export const NDVI_VALUES = [
+  0.72, 0.45, 0.31, 0.68,
+  0.55, 0.82, 0.38, 0.61,
+  0.77, 0.42, 0.30, 0.88,
+  0.50, 0.65, 0.35, 0.90,
 ]
 
-const layers = ['Crop Health (NDVI)', 'Soil Moisture', 'Temperature Map', 'Rainfall Forecast', 'Irrigation Zones']
+export const SOIL_VALUES = [
+  'Clay',  'Loam',  'Sandy', 'Clay',
+  'Loam',  'Sandy', 'Clay',  'Loam',
+  'Sandy', 'Clay',  'Loam',  'Sandy',
+  'Clay',  'Loam',  'Sandy', 'Clay',
+]
+
+export function classifyHealth(ndvi, rainfall) {
+  if (rainfall === null || rainfall === undefined) {
+    if (ndvi >= 0.65) return 'Healthy'
+    if (ndvi >= 0.40) return 'Moderate'
+    return 'Problematic'
+  }
+  if (ndvi >= 0.65 && rainfall >= 3) return 'Healthy'
+  if (ndvi < 0.40 && rainfall < 1) return 'Problematic'
+  return 'Moderate'
+}
+
+export function healthColor(status) {
+  const colors = { Healthy: '#22c55e', Moderate: '#eab308', Problematic: '#ef4444' }
+  return colors[status]
+}
+
+export function buildZones(farmBoundary) {
+  const bbox = turf.bbox(farmBoundary)
+  // cellSide ~0.002 degrees produces a 4×4 grid over the actual ~0.007° farm bbox
+  const grid = turf.squareGrid(bbox, 0.002, { units: 'degrees' })
+
+  const zones = []
+  grid.features.forEach((cell, idx) => {
+    const intersection = turf.intersect(turf.featureCollection([cell, farmBoundary]))
+    if (!intersection) return
+
+    const zoneCentroid = turf.centroid(intersection)
+    const areaM2 = turf.area(intersection)
+    const areaHa = Math.round(areaM2 / 10000 * 100) / 100
+    const centroidCoords = zoneCentroid.geometry.coordinates // [lng, lat]
+
+    const isContained = turf.booleanContains(farmBoundary, zoneCentroid)
+    if (!isContained) {
+      console.warn(`Zone ${idx} centroid is outside farm boundary`)
+    }
+
+    zones.push({
+      id: zones.length,
+      geometry: intersection,
+      centroid: [centroidCoords[1], centroidCoords[0]], // [lat, lng] for Leaflet
+      centroidLngLat: centroidCoords, // [lng, lat] for API calls
+      areaM2,
+      areaHa,
+      ndvi: NDVI_VALUES[zones.length] ?? 0.5,
+      soil: SOIL_VALUES[zones.length] ?? 'Loam',
+      rainfall: null,
+      health: null,
+      color: null,
+    })
+  })
+
+  return zones
+}
+
+export async function fetchRainfall(zones) {
+  const results = await Promise.all(
+    zones.map(z =>
+      fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${z.centroid[0]}&longitude=${z.centroid[1]}&current=precipitation&forecast_days=1`
+      )
+        .then(r => r.json())
+        .then(d => d.current.precipitation)
+        .catch(() => null)
+    )
+  )
+  return results
+}
 
 export default function GISMapping() {
-  const [selectedField, setSelectedField] = useState(allFields[0])
-  const [activeLayer, setActiveLayer] = useState('Crop Health (NDVI)')
-  const [searchTerm, setSearchTerm] = useState('')
+  const [zones, setZones] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [selectedZone, setSelectedZone] = useState(null)
+  const [layerZones, setLayerZones] = useState(true)
+  const [layerBoundary, setLayerBoundary] = useState(true)
 
-  const filtered = allFields.filter(f =>
-    f.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    f.crop.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    f.state.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+  useEffect(() => {
+    const partial = buildZones(FARM_BOUNDARY)
+    setZones(partial)
+    setLoading(true)
+
+    fetchRainfall(partial).then(rainfallValues => {
+      const enriched = partial.map((z, i) => {
+        const rainfall = rainfallValues[i]
+        const health = classifyHealth(z.ndvi, rainfall)
+        return { ...z, rainfall, health, color: healthColor(health) }
+      })
+      setZones(enriched)
+      setLoading(false)
+    })
+  }, [])
+
+  const totalAreaHa = zones.reduce((sum, z) => sum + (z.areaHa || 0), 0).toFixed(2)
+  const healthyCnt = zones.filter(z => z.health === 'Healthy').length
+  const moderateCnt = zones.filter(z => z.health === 'Moderate').length
+  const problematicCnt = zones.filter(z => z.health === 'Problematic').length
 
   return (
     <div className="gis-page fade-in">
+      {/* Header */}
       <div className="gis-header">
         <div>
-          <h1 className="dash-title">🗺️ GIS Mapping – Pan-India View</h1>
-          <p className="dash-sub">Real-time geospatial monitoring across all registered farm units</p>
+          <h1 className="dash-title">🗺️ GIS Mapping – Mote Patil Sugarcane Farms</h1>
+          <p className="dash-sub">Mote Patil Farm House Rd, Maharashtra · 4×4 zone grid · Live rainfall from Open-Meteo</p>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <div className="badge badge-green pulse"><span className="dot dot-green"></span> Live Stream</div>
-          <div className="badge badge-blue">8 Fields Active</div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div className="badge badge-green pulse"><span className="dot dot-green"></span> Live Data</div>
+          <div className="badge badge-blue">{zones.length} Zones</div>
+          <div className="badge badge-yellow">Sugarcane</div>
         </div>
       </div>
 
       <div className="gis-main">
-        {/* Left: Layer controls + Field List */}
+        {/* Left Sidebar */}
         <div className="gis-sidebar">
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div className="card-section-title"><Layers size={14} /> Map Layers</div>
-            {layers.map(l => (
-              <div key={l} className={`layer-option ${activeLayer === l ? 'active' : ''}`} onClick={() => setActiveLayer(l)}>
-                <div className="layer-dot" style={{ background: activeLayer === l ? 'var(--green-accent)' : 'var(--border)' }}></div>
-                {l}
-              </div>
-            ))}
+          {/* Layer Info */}
+          <div className="card" style={{ marginBottom: 14 }}>
+            <div className="card-section-title" style={{ marginBottom: 12 }}><Layers size={13} /> Map Layers</div>
+            <div className="layer-option active">
+              <div className="layer-dot" style={{ background: 'var(--green-accent)' }}></div>
+              Satellite (Esri)
+            </div>
+            <div
+              className={`layer-option ${layerZones ? 'active' : ''}`}
+              onClick={() => setLayerZones(v => !v)}
+              style={{ cursor: 'pointer' }}
+            >
+              <div className="layer-dot" style={{ background: layerZones ? '#eab308' : 'var(--border)' }}></div>
+              Zone Health Grid
+            </div>
+            <div
+              className={`layer-option ${layerBoundary ? 'active' : ''}`}
+              onClick={() => setLayerBoundary(v => !v)}
+              style={{ cursor: 'pointer' }}
+            >
+              <div className="layer-dot" style={{ background: layerBoundary ? '#ffffff' : 'var(--border)' }}></div>
+              Farm Boundary
+            </div>
           </div>
 
+          {/* Summary Panel */}
           <div className="card">
-            <div className="card-section-title" style={{ marginBottom: 10 }}><Filter size={14} /> Field Units</div>
-            <div className="gis-search">
-              <Search size={13} />
-              <input className="gis-search-input" placeholder="Search fields..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-            </div>
-            <div className="field-list">
-              {filtered.map(f => (
-                <div key={f.id} className={`field-list-item ${selectedField?.id === f.id ? 'active' : ''}`} onClick={() => setSelectedField(f)}>
-                  <div className="field-list-dot" style={{ background: f.color }}></div>
-                  <div className="field-list-info">
-                    <div className="field-list-id">{f.id} – {f.state}</div>
-                    <div className="field-list-crop">{f.crop}</div>
-                  </div>
-                  <div className="field-list-ndvi" style={{ color: f.ndvi > 0.7 ? 'var(--green-accent)' : 'var(--orange)' }}>
-                    NDVI {f.ndvi}
-                  </div>
+            <div className="card-section-title" style={{ marginBottom: 12 }}><Activity size={13} /> Zone Summary</div>
+
+            {loading ? (
+              <div className="gis-loading">
+                <div className="gis-loading-row"></div>
+                <div className="gis-loading-row"></div>
+                <div className="gis-loading-row"></div>
+              </div>
+            ) : (
+              <>
+                <div className="gis-summary-row">
+                  <span><span style={{ color: '#22c55e', marginRight: 6 }}>●</span>Healthy</span>
+                  <span className="badge badge-green" style={{ fontSize: 11 }}>{healthyCnt}</span>
                 </div>
-              ))}
-            </div>
+                <div className="gis-summary-row">
+                  <span><span style={{ color: '#eab308', marginRight: 6 }}>●</span>Moderate</span>
+                  <span className="badge badge-yellow" style={{ fontSize: 11 }}>{moderateCnt}</span>
+                </div>
+                <div className="gis-summary-row">
+                  <span><span style={{ color: '#ef4444', marginRight: 6 }}>●</span>Problematic</span>
+                  <span className="badge badge-red" style={{ fontSize: 11 }}>{problematicCnt}</span>
+                </div>
+                <hr className="divider" />
+                <div className="gis-summary-row">
+                  <span className="text-muted text-sm">Total Zones</span>
+                  <span className="text-sm">{zones.length}</span>
+                </div>
+                <div className="gis-summary-row">
+                  <span className="text-muted text-sm">Total Area</span>
+                  <span className="text-sm">{totalAreaHa} Ha</span>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
-        {/* Center: Map */}
+        {/* Map Column */}
         <div className="gis-map-col">
-          <div className="card" style={{ padding: 0, overflow: 'hidden', flex: 1 }}>
+          <div className="card" style={{ padding: 0, overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column' }}>
             <div className="gis-map-toolbar">
-              <div className="gis-map-title">Active Layer: <span className="text-green">{activeLayer}</span></div>
+              <div className="gis-map-title" style={{ display: 'flex', alignItems: 'center' }}>
+                <Leaf size={13} style={{ marginRight: 6 }} />
+                Active Layer: <span className="text-green" style={{ marginLeft: 4 }}>Zone Health (NDVI + Rainfall)</span>
+              </div>
               <div className="gis-map-actions">
-                <button className="btn-ghost" style={{ fontSize: 11 }}><Navigation size={13} /> My Location</button>
-                <button className="btn-ghost" style={{ fontSize: 11 }}>📥 Export KML</button>
+                <div className="badge badge-blue" style={{ fontSize: 10 }}>📡 Sentinel-2A</div>
+                <div className="badge badge-green" style={{ fontSize: 10 }}>10m/px</div>
               </div>
             </div>
-            <MapContainer center={[22.5, 78.9]} zoom={5} style={{ height: '500px', width: '100%' }}>
-              <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="© OpenStreetMap" opacity={0.9} />
-              {filtered.map((f, i) => (
-                <CircleMarker key={i} center={[f.lat, f.lng]} radius={selectedField?.id === f.id ? 16 : 10}
-                  pathOptions={{ color: '#fff', weight: 2, fillColor: f.color, fillOpacity: 0.9 }}
-                  eventHandlers={{ click: () => setSelectedField(f) }}>
-                  <Popup>
-                    <div style={{ fontFamily: 'Inter', minWidth: 180 }}>
-                      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>{f.id} – {f.dist}, {f.state}</div>
-                      <div style={{ fontSize: 11, color: '#555' }}>Crop: {f.crop}</div>
-                      <div style={{ fontSize: 11 }}>NDVI: <strong style={{ color: f.ndvi > 0.7 ? '#22c55e' : '#f97316' }}>{f.ndvi}</strong></div>
-                      <div style={{ fontSize: 11 }}>Moisture: {f.moisture}% | Area: {f.area} Ha</div>
-                      <div style={{ fontSize: 11 }}>Status: <span style={{ color: f.color, fontWeight: 600 }}>{f.status}</span></div>
-                    </div>
-                  </Popup>
-                </CircleMarker>
-              ))}
-            </MapContainer>
+            <div style={{ flex: 1, minHeight: 480 }}>
+              <MapView
+                zones={zones}
+                farmBoundary={FARM_BOUNDARY}
+                onZoneClick={z => setSelectedZone(z)}
+                selectedZoneId={selectedZone?.id ?? null}
+                showZones={layerZones}
+                showBoundary={layerBoundary}
+              />
+            </div>
           </div>
         </div>
 
-        {/* Right: Selected Field Details */}
+        {/* Right Panel — Zone Details */}
         <div className="gis-detail">
-          {selectedField ? (
+          {selectedZone ? (
             <>
               <div className="card">
-                <div className="field-detail-header">
+                <div className="zone-detail-header">
                   <div>
-                    <div className="field-detail-id">{selectedField.id}</div>
-                    <div className="field-detail-name">{selectedField.dist}, {selectedField.state}</div>
+                    <div className="zone-detail-id">Zone {selectedZone.id + 1}</div>
+                    <div className="zone-detail-sub">Sugarcane · Mote Patil Farms, Maharashtra</div>
                   </div>
-                  <div className={`badge ${selectedField.status === 'active' ? 'badge-green' : selectedField.status === 'irrigated' ? 'badge-blue' : 'badge-orange'}`}>
-                    {selectedField.status}
+                  <div className={`badge ${selectedZone.health === 'Healthy' ? 'badge-green' : selectedZone.health === 'Moderate' ? 'badge-yellow' : 'badge-red'}`}>
+                    {selectedZone.health}
                   </div>
                 </div>
-                <div className="field-detail-crop">{selectedField.crop}</div>
+
                 <hr className="divider" />
+
                 <div className="field-metrics-grid">
                   {[
-                    { label: 'NDVI Score', val: selectedField.ndvi, unit: '', color: selectedField.ndvi > 0.7 ? 'var(--green-accent)' : 'var(--orange)' },
-                    { label: 'Area', val: selectedField.area, unit: ' Ha', color: 'var(--blue)' },
-                    { label: 'Soil Moisture', val: selectedField.moisture, unit: '%', color: 'var(--teal)' },
+                    {
+                      label: 'NDVI',
+                      val: selectedZone.ndvi?.toFixed(2),
+                      unit: '',
+                      color: selectedZone.ndvi >= 0.65 ? 'var(--green-accent)' : selectedZone.ndvi >= 0.40 ? 'var(--yellow)' : 'var(--red)'
+                    },
+                    { label: 'Area', val: selectedZone.areaHa, unit: ' Ha', color: 'var(--blue)' },
+                    {
+                      label: 'Rainfall',
+                      val: selectedZone.rainfall !== null && selectedZone.rainfall !== undefined ? selectedZone.rainfall : 'N/A',
+                      unit: selectedZone.rainfall !== null && selectedZone.rainfall !== undefined ? ' mm' : '',
+                      color: 'var(--teal)'
+                    },
                   ].map(m => (
                     <div key={m.label} className="field-metric-box">
                       <div className="field-metric-val" style={{ color: m.color }}>{m.val}{m.unit}</div>
@@ -136,14 +282,31 @@ export default function GISMapping() {
                     </div>
                   ))}
                 </div>
+
                 <div style={{ marginTop: 14 }}>
                   <div className="card-section-title">NDVI Health</div>
-                  <div className="progress-bar">
-                    <div className="progress-fill" style={{ width: `${selectedField.ndvi * 100}%`, background: `linear-gradient(90deg, ${selectedField.ndvi > 0.7 ? 'var(--green-primary)' : 'var(--orange)'}, ${selectedField.ndvi > 0.7 ? 'var(--green-accent)' : 'var(--yellow)'})` }} />
+                  <div className="progress-bar" style={{ marginTop: 8 }}>
+                    <div className="progress-fill" style={{
+                      width: `${(selectedZone.ndvi || 0) * 100}%`,
+                      background: `linear-gradient(90deg, ${
+                        selectedZone.ndvi >= 0.65 ? 'var(--green-primary)' :
+                        selectedZone.ndvi >= 0.40 ? '#92400e' : '#7f1d1d'
+                      }, ${
+                        selectedZone.ndvi >= 0.65 ? 'var(--green-accent)' :
+                        selectedZone.ndvi >= 0.40 ? 'var(--yellow)' : 'var(--red)'
+                      })`
+                    }} />
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
                     <span className="text-sm text-muted">0</span>
                     <span className="text-sm text-muted">1.0</span>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 14 }}>
+                  <div className="card-section-title"><Droplets size={12} style={{ marginRight: 4 }} /> Soil Type</div>
+                  <div style={{ marginTop: 8, fontSize: 14, fontWeight: 600, color: 'var(--teal)' }}>
+                    {selectedZone.soil}
                   </div>
                 </div>
               </div>
@@ -153,24 +316,17 @@ export default function GISMapping() {
                 <div className="sat-data">
                   <div className="sat-row"><span>Satellite</span><span>Sentinel-2A</span></div>
                   <div className="sat-row"><span>Resolution</span><span>10m/pixel</span></div>
-                  <div className="sat-row"><span>Last Pass</span><span>Today 08:34 IST</span></div>
-                  <div className="sat-row"><span>Cloud Cover</span><span className="text-green">4%</span></div>
-                  <div className="sat-row"><span>Coordinates</span><span>{selectedField.lat.toFixed(4)}, {selectedField.lng.toFixed(4)}</span></div>
-                </div>
-              </div>
-
-              <div className="card" style={{ marginTop: 12 }}>
-                <div className="card-section-title">⚡ AI Recommendations</div>
-                <div className="ai-rec-list">
-                  <div className="ai-rec-item">💧 Increase irrigation by 15% in next 3 days</div>
-                  <div className="ai-rec-item">🌾 Apply nitrogen fertilizer at 40 kg/Ha</div>
-                  <div className="ai-rec-item">🔍 Schedule pest inspection for {selectedField.id}</div>
+                  <div className="sat-row"><span>Coordinates</span><span>{selectedZone.centroid?.[0]?.toFixed(4)}, {selectedZone.centroid?.[1]?.toFixed(4)}</span></div>
+                  <div className="sat-row"><span>Area</span><span>{selectedZone.areaHa} Ha</span></div>
+                  <div className="sat-row"><span>Zone ID</span><span>Z-{String(selectedZone.id + 1).padStart(2, '0')}</span></div>
                 </div>
               </div>
             </>
           ) : (
             <div className="card" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 40 }}>
-              Click a field to view details
+              <div style={{ fontSize: 32, marginBottom: 12 }}>🗺️</div>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>No Zone Selected</div>
+              <div style={{ fontSize: 12 }}>Click a colored zone on the map to view its health data</div>
             </div>
           )}
         </div>
