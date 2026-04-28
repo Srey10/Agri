@@ -81,7 +81,7 @@ export default function CropDisease() {
             Crop Disease Detection
           </h1>
           <p className="dash-sub">
-            Mote Patil Sugarcane Farms · Upload a crop image for AI-powered disease analysis
+            Mote Patil Sugarcane Farms · Upload a crop image for disease analysis
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>

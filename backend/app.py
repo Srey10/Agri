@@ -14,12 +14,17 @@ model = tf.keras.models.load_model("model/sugarcane_disease_model.keras")
 classes = ['Healthy', 'Mosaic', 'RedRot', 'Rust', 'Yellow']
 
 treatment_map = {
-    "Healthy": "No disease detected.",
-    "Mosaic": "Remove infected plants and control aphids.",
-    "RedRot": "Destroy infected cane and apply fungicide.",
-    "Rust": "Use fungicide and improve ventilation.",
-    "Yellow": "Improve soil nutrients and drainage."
+    "Healthy": "The crop appears healthy. Maintain proper irrigation, balanced fertilization, and regular field monitoring to prevent future infections.",
+
+    "Mosaic": "This is a viral disease spread by aphids. Remove and destroy infected plants immediately. Control aphid population using insecticides like Imidacloprid. Use disease-free planting material.",
+
+    "RedRot": "A serious fungal disease. Uproot and burn infected canes to stop spread. Treat setts with Carbendazim before planting. Ensure proper drainage and avoid water stagnation.",
+
+    "Rust": "Caused by fungal infection. Apply fungicides such as Mancozeb or Propiconazole. Improve air circulation by proper spacing and avoid excess nitrogen fertilizers.",
+
+    "Yellow": "Indicates nutrient deficiency or yellow leaf disease. Apply balanced fertilizers, especially nitrogen and micronutrients. Improve soil drainage and use resistant varieties if available."
 }
+
 
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)

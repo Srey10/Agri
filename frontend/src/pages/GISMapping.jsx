@@ -142,7 +142,7 @@ export default function GISMapping() {
       <div className="gis-header">
         <div>
           <h1 className="dash-title">🗺️ GIS Mapping – Mote Patil Sugarcane Farms</h1>
-          <p className="dash-sub">Mote Patil Farm House Rd, Maharashtra · 4×4 zone grid · Live rainfall from Open-Meteo</p>
+          <p className="dash-sub">Mote Patil Farm House Rd, Maharashtra · 4×4 zone grid</p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <div className="badge badge-green pulse"><span className="dot dot-green"></span> Live Data</div>
