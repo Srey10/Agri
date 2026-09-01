@@ -9,6 +9,8 @@ import Traceability from './pages/Traceability'
 import KnowledgeHub from './pages/KnowledgeHub'
 import MarketPlace from './pages/MarketPlace'
 import CropDisease from './pages/CropDisease'
+import Forum from './pages/Forum'
+import ForumPost from './pages/ForumPost'
 import Layout from './components/Layout'
 
 function App() {
@@ -40,6 +42,8 @@ function App() {
           <Route path="knowledge" element={<KnowledgeHub user={user} />} />
           <Route path="marketplace" element={<MarketPlace user={user} />} />
           <Route path="crop-disease" element={<CropDisease user={user} />} />
+          <Route path="forum" element={<Forum user={user} />} />
+          <Route path="forum/:id" element={<ForumPost user={user} />} />
         </Route>
       </Routes>
     </BrowserRouter>

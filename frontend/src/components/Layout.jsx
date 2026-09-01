@@ -1,6 +1,6 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
-import { LayoutDashboard, Map, Droplets, Package, BookOpen, ShoppingCart, Settings, HelpCircle, LogOut, Bell, Languages, Mic, Plus, ChevronDown, Microscope } from 'lucide-react'
+import { LayoutDashboard, Map, Droplets, Package, BookOpen, ShoppingCart, Settings, HelpCircle, LogOut, Bell, Languages, Mic, Plus, ChevronDown, Microscope, MessageSquare } from 'lucide-react'
 import './Layout.css'
 
 const navItems = [
@@ -9,6 +9,7 @@ const navItems = [
   { path: '/irrigation', icon: Droplets, label: 'Irrigation & Climate' },
   { path: '/knowledge', icon: BookOpen, label: 'Knowledge Hub' },
   { path: '/crop-disease', icon: Microscope, label: 'Crop Disease' },
+  { path: '/forum', icon: MessageSquare, label: 'Forum' },
 ]
 
 const languages = [
