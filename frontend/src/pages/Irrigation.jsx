@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
-import { MapContainer, TileLayer, Polygon, CircleMarker, Popup } from 'react-leaflet'
-import { Droplets, Thermometer, Calendar, Plus, Download, Activity, MapPin, Loader } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { MapContainer, TileLayer, Polygon, Popup } from 'react-leaflet'
+import { Droplets, Thermometer, Calendar, Plus, Download, MapPin } from 'lucide-react'
 import './Irrigation.css'
 
 // Mote Patil Sugarcane Farms — exact coordinates
@@ -19,6 +19,9 @@ const farmPolygon = [
   [19.4275, 74.8990],
   [19.4300, 74.8975],
 ]
+
+// How often the weather API is refreshed automatically (5 minutes)
+const WEATHER_REFRESH_MS = 5 * 60 * 1000
 
 // Base schedule — times and base water demand per block
 // Status, actual water demand, and notes are computed from live weather
@@ -95,14 +98,6 @@ function buildLiveSchedule(weather) {
   })
 }
 
-// Sensors placed within the actual farm boundary
-const sensors = [
-  { id: 'MPS-S01', zone: 'North Block', moisture: 72, temp: 32, battery: 88, status: 'active', lat: 19.4338, lng: 74.9010 },
-  { id: 'MPS-S02', zone: 'Central Block', moisture: 55, temp: 34, battery: 74, status: 'active', lat: 19.4308, lng: 74.9020 },
-  { id: 'MPS-S03', zone: 'South Block', moisture: 31, temp: 35, battery: 45, status: 'warning', lat: 19.4280, lng: 74.9030 },
-  { id: 'MPS-S04', zone: 'East Block', moisture: 68, temp: 33, battery: 91, status: 'active', lat: 19.4310, lng: 74.9045 },
-]
-
 function getWeatherInfo(code) {
   if (code === 0)  return { icon: '☀️', label: 'Clear Sky' }
   if (code <= 2)   return { icon: '⛅', label: 'Partly Cloudy' }
@@ -116,6 +111,11 @@ function getWeatherInfo(code) {
   return { icon: '⛈️', label: 'Heavy Storm' }
 }
 
+function formatTime(date) {
+  if (!date) return '—'
+  return date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
 const DAY_LABELS = ['Today', 'Tomorrow', 'Day 3', 'Day 4', 'Day 5']
 
 export default function Irrigation() {
@@ -124,10 +124,15 @@ export default function Irrigation() {
   const [weatherLoading, setWeatherLoading] = useState(false)
   const [weatherError, setWeatherError] = useState('')
   const [currentWeather, setCurrentWeather] = useState(null)
+  const [lastRefreshed, setLastRefreshed] = useState(null)
+  const intervalRef = useRef(null)
 
-  // Auto-fetch weather for the exact farm coordinates on mount
+  // Auto-fetch weather for the exact farm coordinates on mount,
+  // then keep refreshing every 5 minutes.
   useEffect(() => {
     fetchFarmWeather()
+    intervalRef.current = setInterval(fetchFarmWeather, WEATHER_REFRESH_MS)
+    return () => clearInterval(intervalRef.current)
   }, [])
 
   async function fetchFarmWeather() {
@@ -164,6 +169,7 @@ export default function Irrigation() {
         precipSum: d.precipitation_sum[i] ?? 0,
       }))
       setForecast(parsed)
+      setLastRefreshed(new Date())
     } catch (err) {
       setWeatherError('Failed to fetch weather data. Check your connection.')
     } finally {
@@ -172,6 +178,11 @@ export default function Irrigation() {
   }
 
   const liveSchedule = buildLiveSchedule(currentWeather)
+
+  // Average soil moisture across scheduled blocks (replaces the old sensor-derived figure)
+  const avgMoisture = Math.round(
+    liveSchedule.reduce((sum, s) => sum + s.moisture, 0) / liveSchedule.length
+  )
 
   // Derive AI recommendation from live weather
   const aiRec = currentWeather
@@ -208,8 +219,8 @@ export default function Irrigation() {
           },
           {
             label: 'Current Soil Moisture',
-            val: sensors[0].moisture, unit: '%', icon: '🌱',
-            sub: `Sensor MPS-S01 · North Block`,
+            val: avgMoisture, unit: '%', icon: '🌱',
+            sub: `Average across scheduled blocks`,
             color: 'var(--teal)', badge: 'LIVE'
           },
           {
@@ -278,31 +289,16 @@ export default function Irrigation() {
                   </div>
                 </Popup>
               </Polygon>
-              {sensors.map((s, i) => (
-                <CircleMarker key={i} center={[s.lat, s.lng]} radius={10}
-                  pathOptions={{ color: '#fff', weight: 2, fillColor: s.status === 'active' ? '#22c55e' : '#f97316', fillOpacity: 1 }}>
-                  <Popup>
-                    <div style={{ fontFamily: 'Inter', fontSize: 12 }}>
-                      <strong>{s.id}</strong><br />Zone: {s.zone}<br />
-                      Moisture: {s.moisture}% | Temp: {s.temp}°C<br />
-                      Battery: {s.battery}%
-                    </div>
-                  </Popup>
-                </CircleMarker>
-              ))}
             </MapContainer>
-            <div className="irr-map-footer">
-              <div><span className="text-muted text-sm">Active Sensor: </span><span className="text-green">MPS-S01 · North Block · Moisture {sensors[0].moisture}%</span></div>
-            </div>
           </div>
         </div>
 
         {/* Right Panel */}
         <div className="irr-right-col">
           <div className="irr-tabs">
-            {['schedule', 'sensors', 'weather'].map(t => (
+            {['schedule', 'weather'].map(t => (
               <button key={t} className={`irr-tab ${activeTab === t ? 'active' : ''}`} onClick={() => setActiveTab(t)}>
-                {t === 'schedule' ? '📅 Schedule' : t === 'sensors' ? '📡 Sensors' : '🌦️ Weather'}
+                {t === 'schedule' ? '📅 Schedule' : '🌦️ Weather'}
               </button>
             ))}
           </div>
@@ -346,35 +342,18 @@ export default function Irrigation() {
             </div>
           )}
 
-          {/* Sensors Tab */}
-          {activeTab === 'sensors' && (
-            <div className="sensors-list">
-              {sensors.map((s, i) => (
-                <div key={i} className="sensor-card">
-                  <div className="sensor-header">
-                    <div>
-                      <div className="sensor-id">{s.id}</div>
-                      <div className="sensor-zone">{s.zone}</div>
-                    </div>
-                    <div className={`badge ${s.status === 'active' ? 'badge-green' : 'badge-orange'}`}>{s.status}</div>
-                  </div>
-                  <div className="sensor-metrics">
-                    <div className="s-metric"><Droplets size={12} style={{ color: 'var(--blue)' }} /><strong>{s.moisture}%</strong><span>Moisture</span></div>
-                    <div className="s-metric"><Thermometer size={12} style={{ color: 'var(--orange)' }} /><strong>{s.temp}°C</strong><span>Temp</span></div>
-                    <div className="s-metric"><Activity size={12} style={{ color: 'var(--green-accent)' }} /><strong>{s.battery}%</strong><span>Battery</span></div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Weather Tab — auto-loaded for farm coordinates */}
+          {/* Weather Tab — auto-loaded for farm coordinates, refreshes every 5 min */}
           {activeTab === 'weather' && (
             <div className="weather-forecast">
               {/* Farm location label */}
-              <div className="weather-location-label" style={{ marginBottom: 12 }}>
+              <div className="weather-location-label" style={{ marginBottom: 4 }}>
                 <MapPin size={11} /> Live 5-day forecast for <strong>{FARM_NAME}</strong>
                 <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--green-accent)' }}>● {FARM_LAT.toFixed(4)}, {FARM_LNG.toFixed(4)}</span>
+              </div>
+
+              {/* Last refreshed */}
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 12 }}>
+                Last refreshed: {formatTime(lastRefreshed)} · Auto-refreshes every 5 min
               </div>
 
               {/* Current conditions */}
