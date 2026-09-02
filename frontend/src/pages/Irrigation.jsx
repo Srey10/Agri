@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 import { useState, useEffect, useRef } from 'react'
 import { MapContainer, TileLayer, Polygon, Popup } from 'react-leaflet'
 import { Droplets, Thermometer, Calendar, Plus, Download, MapPin } from 'lucide-react'
@@ -9,15 +10,22 @@ const FARM_LNG = 74.9010
 const FARM_NAME = 'Mote Patil Sugarcane Farms, Maharashtra'
 
 // Farm boundary polygon for map (same as GISMapping)
+// Mote Patil Sugarcane Farms — exact traced boundary
 const farmPolygon = [
-  [19.4330, 74.8985],
-  [19.4345, 74.9010],
-  [19.4340, 74.9045],
-  [19.4315, 74.9055],
-  [19.4285, 74.9050],
-  [19.4270, 74.9020],
-  [19.4275, 74.8990],
-  [19.4300, 74.8975],
+  [19.431147, 74.900480],
+  [19.431153, 74.901019],
+  [19.431138, 74.901906],
+  [19.430525, 74.901972],
+  [19.430661, 74.901574],
+  [19.430316, 74.901609],
+  [19.429984, 74.901629],
+  [19.430051, 74.901130],
+  [19.430128, 74.900718],
+  [19.430202, 74.900242],
+  [19.430285, 74.899713],
+  [19.430611, 74.900040],
+  [19.430935, 74.900324],
+  [19.431147, 74.900480],
 ]
 
 // How often the weather API is refreshed automatically (5 minutes)
