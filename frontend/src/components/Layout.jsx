@@ -15,14 +15,8 @@ const navItems = [
 const languages = [
   { code: 'hi', label: 'हिंदी' },
   { code: 'en', label: 'English' },
-  { code: 'pa', label: 'ਪੰਜਾਬੀ' },
   { code: 'mr', label: 'मराठी' },
-  { code: 'ta', label: 'தமிழ்' },
-  { code: 'te', label: 'తెలుగు' },
-  { code: 'bn', label: 'বাংলা' },
-  { code: 'gu', label: 'ગુજરાતી' },
 ]
-
 export default function Layout({ user, onLogout }) {
   const navigate = useNavigate()
   const [notifications] = useState(3)
