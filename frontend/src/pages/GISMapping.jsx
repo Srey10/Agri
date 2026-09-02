@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { useState, useEffect } from 'react'
 import * as turf from '@turf/turf'
 import MapView from '../components/MapView'
@@ -26,6 +27,7 @@ export const FARM_BOUNDARY = {
   }
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const NDVI_VALUES = [
   0.72, 0.45, 0.31, 0.68,
   0.55, 0.82, 0.38, 0.61,
@@ -33,6 +35,7 @@ export const NDVI_VALUES = [
   0.50, 0.65, 0.35, 0.90,
 ]
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const SOIL_VALUES = [
   'Clay',  'Loam',  'Sandy', 'Clay',
   'Loam',  'Sandy', 'Clay',  'Loam',
@@ -40,6 +43,7 @@ export const SOIL_VALUES = [
   'Clay',  'Loam',  'Sandy', 'Clay',
 ]
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function classifyHealth(ndvi, rainfall) {
   if (rainfall === null || rainfall === undefined) {
     if (ndvi >= 0.65) return 'Healthy'
@@ -51,6 +55,7 @@ export function classifyHealth(ndvi, rainfall) {
   return 'Moderate'
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function healthColor(status) {
   const colors = { Healthy: '#22c55e', Moderate: '#eab308', Problematic: '#ef4444' }
   return colors[status]
@@ -94,6 +99,7 @@ export function buildZones(farmBoundary) {
   return zones
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export async function fetchRainfall(zones) {
   const results = await Promise.all(
     zones.map(z =>
@@ -116,20 +122,91 @@ export default function GISMapping() {
   const [layerBoundary, setLayerBoundary] = useState(true)
 
   useEffect(() => {
+  const loadGISData = async () => {
     const partial = buildZones(FARM_BOUNDARY)
+
     setZones(partial)
     setLoading(true)
 
-    fetchRainfall(partial).then(rainfallValues => {
+    try {
+      // Get rainfall
+      const rainfallValues = await fetchRainfall(partial)
+
+      // Get real Sentinel-2 NDVI for every zone
+      const ndviValues = await Promise.all(
+        partial.map(async (zone) => {
+          try {
+            const response = await fetch(
+              'http://127.0.0.1:5000/ndvi',
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                  geometry: zone.geometry.geometry
+                })
+              }
+            )
+
+            const data = await response.json()
+
+            console.log(
+              `Zone ${zone.id + 1} Sentinel NDVI:`,
+              data
+            )
+
+            return data.ndvi
+          } catch (error) {
+            console.error(
+              `NDVI failed for zone ${zone.id + 1}:`,
+              error
+            )
+
+            return null
+          }
+        })
+      )
+
+      // Combine Sentinel NDVI + rainfall
       const enriched = partial.map((z, i) => {
+
         const rainfall = rainfallValues[i]
-        const health = classifyHealth(z.ndvi, rainfall)
-        return { ...z, rainfall, health, color: healthColor(health) }
+        const ndvi = ndviValues[i]
+
+        const health =
+          ndvi !== null
+            ? classifyHealth(ndvi, rainfall)
+            : 'Moderate'
+
+        return {
+          ...z,
+          ndvi,
+          rainfall,
+          health,
+          color: healthColor(health)
+        }
       })
+
       setZones(enriched)
+
+    } catch (error) {
+
+      console.error(
+        'GIS data loading failed:',
+        error
+      )
+
+    } finally {
+
       setLoading(false)
-    })
-  }, [])
+
+    }
+  }
+
+  loadGISData()
+
+}, [])
 
   const totalAreaHa = zones.reduce((sum, z) => sum + (z.areaHa || 0), 0).toFixed(2)
   const healthyCnt = zones.filter(z => z.health === 'Healthy').length
