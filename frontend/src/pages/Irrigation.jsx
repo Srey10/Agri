@@ -50,8 +50,13 @@ function calcET0(tempC, humidity) {
   return Math.max(0.5, Math.min(et0, 8))
 }
 
-// Derive live schedule from weather conditions
-function buildLiveSchedule(weather) {
+// Derive live schedule from weather conditions + real satellite soil moisture.
+// satMoisture (from NASA POWER) becomes the true baseline; each block keeps
+// its original relative offset so zones still show realistic variation
+// instead of one identical number everywhere.
+function buildLiveSchedule(weather, satMoisture) {
+  const avgStaticBase = BASE_SCHEDULE.reduce((s, b) => s + b.baseMoisture, 0) / BASE_SCHEDULE.length
+
   if (!weather) return BASE_SCHEDULE.map(b => ({
     ...b,
     time: `${String(b.startHour).padStart(2,'0')}:00 – ${String(b.endHour).padStart(2,'0')}:00`,
@@ -69,6 +74,13 @@ function buildLiveSchedule(weather) {
   const et0 = calcET0(temp, humidity)
 
   return BASE_SCHEDULE.map(b => {
+    // Anchor this block's moisture to the real satellite reading, keeping
+    // its original offset from the fleet average for per-zone variation
+    const offset = b.baseMoisture - avgStaticBase
+    const liveMoisture = satMoisture
+      ? Math.max(5, Math.min(95, Math.round(satMoisture.surfacePct + offset)))
+      : b.baseMoisture
+
     // Adjust water demand based on ET₀ and rainfall
     const rainReduction = rain > 5 ? 0.5 : rain > 2 ? 0.75 : rain > 0.5 ? 0.9 : 1.0
     const tempFactor = temp > 38 ? 1.25 : temp > 35 ? 1.15 : temp > 32 ? 1.05 : 1.0
@@ -79,9 +91,9 @@ function buildLiveSchedule(weather) {
     if (rain > 5) {
       status = 'Paused – Rain'
       note = `Active rainfall ${rain}mm — irrigation paused automatically`
-    } else if (b.baseMoisture < 35 && rain < 1) {
+    } else if (liveMoisture < 35 && rain < 1) {
       status = 'Drought Risk'
-      note = `Moisture critically low. ET₀ = ${et0.toFixed(1)} mm/day. Urgent irrigation needed.`
+      note = `Moisture critically low (satellite-estimated). ET₀ = ${et0.toFixed(1)} mm/day. Urgent irrigation needed.`
     } else if (currentHour >= b.endHour) {
       status = 'Complete'
       note = rain > 0.5 ? `Completed. ${rain}mm rain supplemented — water saved.` : `Completed on schedule.`
@@ -99,7 +111,7 @@ function buildLiveSchedule(weather) {
       ...b,
       time: `${String(b.startHour).padStart(2,'0')}:00 – ${String(b.endHour).padStart(2,'0')}:00`,
       water: `${adjustedWater} M³/Ha`,
-      moisture: b.baseMoisture,
+      moisture: liveMoisture,
       status,
       note,
     }
@@ -171,6 +183,50 @@ function generateIrrigationAdvisory(weather, avgMoisture) {
   return { level, text, et0, netBalance }
 }
 
+// ── Real satellite soil moisture: NASA POWER API ──────────────────────────
+// Uses GWETTOP (surface wetness) and GWETROOT (root-zone wetness), both
+// expressed as a 0-1 fraction of saturation. No API key, no HDF5 parsing —
+// plain JSON over HTTPS, same pattern as the Open-Meteo weather call below.
+// Data has ~2-3 day satellite processing latency, so we request a 7-day
+// window and use the most recent day that has a valid reading.
+function formatDateForNASA(d) {
+  return d.toISOString().slice(0, 10).replace(/-/g, '')
+}
+
+async function fetchSatelliteSoilMoisture(lat, lng) {
+  const end = new Date()
+  const start = new Date()
+  start.setDate(start.getDate() - 7)
+
+  const url =
+    `https://power.larc.nasa.gov/api/temporal/daily/point` +
+    `?parameters=GWETTOP,GWETROOT` +
+    `&community=AG` +
+    `&longitude=${lng}&latitude=${lat}` +
+    `&start=${formatDateForNASA(start)}&end=${formatDateForNASA(end)}` +
+    `&format=JSON`
+
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`NASA POWER request failed (${res.status})`)
+  const data = await res.json()
+
+  const top = data.properties.parameter.GWETTOP
+  const root = data.properties.parameter.GWETROOT
+
+  // NASA fills missing/unprocessed days with -999 — walk backward to the
+  // most recent day that actually has a value
+  const dates = Object.keys(top).sort().reverse()
+  const latestDate = dates.find(d => top[d] !== -999 && top[d] != null)
+  if (!latestDate) throw new Error('No recent soil moisture data available for this location')
+
+  return {
+    date: latestDate,
+    surfacePct: Math.round(top[latestDate] * 100),   // fraction of saturation → %
+    rootZonePct: Math.round(root[latestDate] * 100),
+    source: 'NASA POWER (GWETTOP/GWETROOT)',
+  }
+}
+
 function getWeatherInfo(code) {
   if (code === 0)  return { icon: '☀️', label: 'Clear Sky' }
   if (code <= 2)   return { icon: '⛅', label: 'Partly Cloudy' }
@@ -198,7 +254,11 @@ export default function Irrigation() {
   const [weatherError, setWeatherError] = useState('')
   const [currentWeather, setCurrentWeather] = useState(null)
   const [lastRefreshed, setLastRefreshed] = useState(null)
+  const [satMoisture, setSatMoisture] = useState(null)
+  const [satMoistureLoading, setSatMoistureLoading] = useState(false)
+  const [satMoistureError, setSatMoistureError] = useState('')
   const intervalRef = useRef(null)
+  const satIntervalRef = useRef(null)
 
   // Auto-fetch weather for the exact farm coordinates on mount,
   // then keep refreshing every 5 minutes.
@@ -207,6 +267,28 @@ export default function Irrigation() {
     intervalRef.current = setInterval(fetchFarmWeather, WEATHER_REFRESH_MS)
     return () => clearInterval(intervalRef.current)
   }, [])
+
+  // Satellite soil moisture updates far less often than weather (daily
+  // satellite passes with a few days of processing lag), so refresh
+  // every 12 hours rather than every 5 minutes.
+  useEffect(() => {
+    loadSatelliteSoilMoisture()
+    satIntervalRef.current = setInterval(loadSatelliteSoilMoisture, 12 * 60 * 60 * 1000)
+    return () => clearInterval(satIntervalRef.current)
+  }, [])
+
+  async function loadSatelliteSoilMoisture() {
+    setSatMoistureLoading(true)
+    setSatMoistureError('')
+    try {
+      const result = await fetchSatelliteSoilMoisture(FARM_LAT, FARM_LNG)
+      setSatMoisture(result)
+    } catch (err) {
+      setSatMoistureError('Could not fetch satellite soil moisture — using field estimates instead.')
+    } finally {
+      setSatMoistureLoading(false)
+    }
+  }
 
   async function fetchFarmWeather() {
     setWeatherLoading(true)
@@ -250,7 +332,7 @@ export default function Irrigation() {
     }
   }
 
-  const liveSchedule = buildLiveSchedule(currentWeather)
+  const liveSchedule = buildLiveSchedule(currentWeather, satMoisture)
 
   // Average soil moisture across scheduled blocks (replaces the old sensor-derived figure)
   const avgMoisture = Math.round(
@@ -290,8 +372,10 @@ export default function Irrigation() {
           {
             label: 'Current Soil Moisture',
             val: avgMoisture, unit: '%', icon: '🌱',
-            sub: `Average across scheduled blocks`,
-            color: 'var(--teal)', badge: 'LIVE'
+            sub: satMoisture
+              ? `NASA POWER satellite · as of ${satMoisture.date.slice(0,4)}-${satMoisture.date.slice(4,6)}-${satMoisture.date.slice(6,8)}`
+              : satMoistureLoading ? 'Fetching satellite reading...' : 'Using field estimates (satellite unavailable)',
+            color: 'var(--teal)', badge: satMoisture ? 'LIVE' : 'AI INSIGHT'
           },
           {
             label: 'Field Temperature',
@@ -444,6 +528,29 @@ export default function Irrigation() {
                   ))}
                 </div>
               )}
+
+              {/* Satellite soil moisture detail */}
+              {satMoisture && (
+                <div style={{ background: 'var(--bg-card2)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border)', marginBottom: 12 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>
+                    Satellite Soil Moisture — {satMoisture.source}
+                  </div>
+                  <div style={{ display: 'flex', gap: 16 }}>
+                    <div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--teal)' }}>{satMoisture.surfacePct}%</div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Surface wetness</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--blue)' }}>{satMoisture.rootZonePct}%</div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Root-zone wetness</div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.4, fontStyle: 'italic' }}>
+                    Satellite-estimated at ~50km resolution — reflects regional conditions around the farm, not a per-plot sensor reading.
+                  </div>
+                </div>
+              )}
+              {satMoistureError && <div className="weather-error">⚠️ {satMoistureError}</div>}
 
               {/* Error */}
               {weatherError && <div className="weather-error">⚠️ {weatherError}</div>}
