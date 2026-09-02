@@ -4,15 +4,64 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
     <title>AgriSense GIS – Digital Agritech Platform for India</title>
-    <meta name="description" content="AgriSense GIS is India's premier digital agronomy platform offering smart irrigation,Disease Detection, AI-powered advisory, and GIS mapping for Indian farmers." />
+
+    <meta
+      name="description"
+      content="AgriSense GIS is India's premier digital agronomy platform offering smart irrigation,Disease Detection, AI-powered advisory, and GIS mapping for Indian farmers."
+    />
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link
+      rel="preconnect"
+      href="https://fonts.gstatic.com"
+      crossorigin
+    />
+
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Outfit:wght@300;400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
   </head>
+
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
+
+    <!-- Hidden Google Translate element -->
+    <div
+      id="google_translate_element"
+      style="display: none;"
+    ></div>
+
+    <!-- Google Translate initialization -->
+    <script>
+      function googleTranslateElementInit() {
+        new google.translate.TranslateElement(
+          {
+            pageLanguage: 'en',
+            includedLanguages: 'en,hi,mr',
+            autoDisplay: false
+          },
+          'google_translate_element'
+        );
+      }
+    </script>
+
+    <!-- Google Translate -->
+    <script
+      src="https://translate.google.com/translate_a/element.js?cb=googleTranslateElementInit"
+    ></script>
+
+    <!-- React -->
+    <script
+      type="module"
+      src="/src/main.jsx"
+    ></script>
   </body>
 </html>
