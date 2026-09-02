@@ -5,13 +5,12 @@ os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import numpy as np
-from PIL import Image as PILImage
-import zipfile
-import json
-import tempfile
-import shutil
+import tensorflow as tf
+from tensorflow.keras.preprocessing import image
+from tensorflow.keras.applications.efficientnet import preprocess_input
 import requests
 from dotenv import load_dotenv
+import time
 
 
 # ============================================================
@@ -104,209 +103,48 @@ SENTINEL_STATS_URL = (
 
 
 # ============================================================
-# MODEL LOADING
+# LOAD MODEL — WORKING MODEL LOADING
 # ============================================================
 
-def patch_and_load_model():
+print("Loading model...")
 
-    """
-    Patch the model config to fix the batch_shape mismatch
-    between the Sequential wrapper and the inner EfficientNet
-    InputLayer, then load with Keras 3.
-    """
+model = tf.keras.models.load_model(MODEL_PATH)
 
-    import tensorflow as tf
-
-    # Extract the .keras zip
-    tmp_dir = tempfile.mkdtemp()
-
-    try:
-
-        with zipfile.ZipFile(
-            MODEL_PATH,
-            'r'
-        ) as z:
-
-            z.extractall(
-                tmp_dir
-            )
-
-
-        config_path = os.path.join(
-            tmp_dir,
-            'config.json'
-        )
-
-
-        with open(
-            config_path,
-            'r'
-        ) as f:
-
-            config = json.load(f)
-
-
-        config_str = json.dumps(
-            config
-        )
-
-
-        # Simple replacement for Keras 3 compatibility
-
-        config_str_fixed = config_str.replace(
-            '"batch_shape": [null, 224, 224, 3]',
-            '"shape": [224, 224, 3]'
-        ).replace(
-            '"batch_shape":[null,224,224,3]',
-            '"shape":[224,224,3]'
-        )
-
-
-        with open(
-            config_path,
-            'w'
-        ) as f:
-
-            f.write(
-                config_str_fixed
-            )
-
-
-        # Rebuild patched .keras file
-
-        patched_path = os.path.join(
-            tmp_dir,
-            'patched_model.keras'
-        )
-
-
-        with zipfile.ZipFile(
-            patched_path,
-            'w',
-            zipfile.ZIP_DEFLATED
-        ) as zout:
-
-            for root, dirs, files in os.walk(
-                tmp_dir
-            ):
-
-                for file in files:
-
-                    if file == 'patched_model.keras':
-                        continue
-
-
-                    filepath = os.path.join(
-                        root,
-                        file
-                    )
-
-
-                    arcname = os.path.relpath(
-                        filepath,
-                        tmp_dir
-                    )
-
-
-                    zout.write(
-                        filepath,
-                        arcname
-                    )
-
-
-        model = tf.keras.models.load_model(
-            patched_path
-        )
-
-
-        print(
-            f"Model loaded OK. "
-            f"Input: {model.input_shape}, "
-            f"Output: {model.output_shape}"
-        )
-
-
-        return model
-
-
-    finally:
-
-        shutil.rmtree(
-            tmp_dir,
-            ignore_errors=True
-        )
-
-
-# ============================================================
-# LOAD MODEL
-# ============================================================
-
-print(
-    "Loading model..."
-)
-
-model = patch_and_load_model()
-
-print(
-    "Model ready."
-)
-
-
-# ============================================================
-# IMAGE PREPROCESSING
-# ============================================================
-
-def preprocess_image(path):
-
-    """
-    Load image as RGB 224x224,
-    apply EfficientNet preprocessing
-    (scale to [-1, 1]).
-    """
-
-    img = PILImage.open(
-        path
-    ).convert('RGB')
-
-
-    img = img.resize(
-        (224, 224)
-    )
-
-
-    img_array = np.array(
-        img,
-        dtype=np.float32
-    )
-
-
-    img_array = (
-        img_array / 127.5
-    ) - 1.0
-
-
-    return np.expand_dims(
-        img_array,
-        axis=0
-    )
+print("Model ready.")
 
 
 # ============================================================
 # SENTINEL AUTHENTICATION
 # ============================================================
 
-def get_sentinel_token():
+# Cache the Sentinel token so every zone does NOT request
+# a new OAuth token.
+SENTINEL_ACCESS_TOKEN = None
+SENTINEL_TOKEN_EXPIRES_AT = 0
+
+
+def get_sentinel_token(force_refresh=False):
+
+    global SENTINEL_ACCESS_TOKEN
+    global SENTINEL_TOKEN_EXPIRES_AT
+
+    # Reuse the existing token if it is still valid.
+    # Refresh one minute before expiry.
+    if (
+        not force_refresh
+        and SENTINEL_ACCESS_TOKEN
+        and time.time() < SENTINEL_TOKEN_EXPIRES_AT - 60
+    ):
+        return SENTINEL_ACCESS_TOKEN
 
     if (
         not SENTINEL_CLIENT_ID
         or not SENTINEL_CLIENT_SECRET
     ):
-
         raise RuntimeError(
             "Sentinel Hub credentials are missing. "
             "Check your .env file."
         )
-
 
     response = requests.post(
 
@@ -326,13 +164,26 @@ def get_sentinel_token():
         timeout=30
     )
 
-
     response.raise_for_status()
 
+    token_data = response.json()
 
-    return response.json()[
+    SENTINEL_ACCESS_TOKEN = token_data[
         "access_token"
     ]
+
+    # Sentinel normally returns expires_in.
+    # Keep a safe fallback if it is missing.
+    expires_in = token_data.get(
+        "expires_in",
+        600
+    )
+
+    SENTINEL_TOKEN_EXPIRES_AT = (
+        time.time() + expires_in
+    )
+
+    return SENTINEL_ACCESS_TOKEN
 
 
 # ============================================================
@@ -352,7 +203,6 @@ def get_ndvi():
         # ----------------------------------------------------
 
         data = request.get_json()
-
 
         if (
             not data
@@ -582,33 +432,129 @@ def get_ndvi():
 
         # ----------------------------------------------------
         # SEND REQUEST TO SENTINEL
+        # WITH RETRIES
         # ----------------------------------------------------
 
-        response = requests.post(
+        response = None
 
-            SENTINEL_STATS_URL,
+        for attempt in range(3):
 
-            headers={
+            try:
 
-                "Authorization":
-                    f"Bearer {token}",
+                response = requests.post(
 
-                "Content-Type":
-                    "application/json",
+                    SENTINEL_STATS_URL,
 
-                "Accept":
-                    "application/json"
+                    headers={
 
-            },
+                        "Authorization":
+                            f"Bearer {token}",
 
-            json=request_body,
+                        "Content-Type":
+                            "application/json",
 
-            timeout=120
+                        "Accept":
+                            "application/json"
 
-        )
+                    },
+
+                    json=request_body,
+
+                    timeout=120
+
+                )
+
+            except requests.exceptions.RequestException as e:
+
+                print(
+                    f"Sentinel connection error "
+                    f"(attempt {attempt + 1}/3): {e}"
+                )
+
+                if attempt == 2:
+                    raise
+
+                time.sleep(
+                    2 ** attempt
+                )
+
+                continue
 
 
-        response.raise_for_status()
+            # ------------------------------------------------
+            # SUCCESS
+            # ------------------------------------------------
+
+            if response.status_code == 200:
+
+                break
+
+
+            # ------------------------------------------------
+            # TOKEN EXPIRED
+            # ------------------------------------------------
+
+            if response.status_code == 401:
+
+                print(
+                    "Sentinel token expired. "
+                    "Refreshing token..."
+                )
+
+                token = get_sentinel_token(
+                    force_refresh=True
+                )
+
+                if attempt < 2:
+                    continue
+
+
+            # ------------------------------------------------
+            # TEMPORARY SENTINEL ERROR
+            # ------------------------------------------------
+
+            if response.status_code in (
+                429,
+                500,
+                502,
+                503,
+                504
+            ):
+
+                wait_time = 2 ** attempt
+
+                print(
+                    f"Sentinel returned "
+                    f"{response.status_code}. "
+                    f"Retrying in {wait_time}s..."
+                )
+
+                if attempt < 2:
+
+                    time.sleep(
+                        wait_time
+                    )
+
+                    continue
+
+
+            # ------------------------------------------------
+            # OTHER HTTP ERROR
+            # ------------------------------------------------
+
+            response.raise_for_status()
+
+
+        # ----------------------------------------------------
+        # FINAL CHECK
+        # ----------------------------------------------------
+
+        if (
+            response is None
+            or response.status_code != 200
+        ):
+
+            response.raise_for_status()
 
 
         result = response.json()
@@ -699,6 +645,18 @@ def get_ndvi():
 
 
         # ----------------------------------------------------
+        # LOG RESULT
+        # ----------------------------------------------------
+
+        print(
+            f"NDVI result: "
+            f"{ndvi_value} | "
+            f"pixels: {pixel_count} | "
+            f"nodata: {nodata_count}"
+        )
+
+
+        # ----------------------------------------------------
         # RETURN CLEAN RESPONSE TO REACT
         # ----------------------------------------------------
 
@@ -733,17 +691,24 @@ def get_ndvi():
 
     except requests.exceptions.HTTPError as e:
 
+        details = (
+            e.response.text
+            if e.response
+            else str(e)
+        )
+
+        print(
+            "Sentinel HTTP error:",
+            details
+        )
+
         return jsonify({
 
             "error":
                 "Sentinel Hub request failed",
 
             "details":
-                (
-                    e.response.text
-                    if e.response
-                    else str(e)
-                )
+                details
 
         }), 502
 
@@ -754,6 +719,11 @@ def get_ndvi():
 
     except Exception as e:
 
+        print(
+            "NDVI error:",
+            str(e)
+        )
+
         return jsonify({
 
             "error":
@@ -763,7 +733,7 @@ def get_ndvi():
 
 
 # ============================================================
-# EXISTING PREDICT ENDPOINT - UNCHANGED
+# PREDICT ENDPOINT — ORIGINAL WORKING PREPROCESSING
 # ============================================================
 
 @app.route(
@@ -775,10 +745,8 @@ def predict():
     if 'image' not in request.files:
 
         return jsonify({
-
             "error":
                 "No image file provided"
-
         }), 400
 
 
@@ -788,11 +756,8 @@ def predict():
 
 
     path = os.path.join(
-
         UPLOAD_FOLDER,
-
         file.filename
-
     )
 
 
@@ -803,17 +768,39 @@ def predict():
 
     try:
 
-        img_array = preprocess_image(
-            path
+        # ----------------------------------------------------
+        # ORIGINAL WORKING PREPROCESSING
+        # ----------------------------------------------------
+
+        img = image.load_img(
+            path,
+            target_size=(224, 224)
         )
 
 
-        prediction = model.predict(
+        img_array = image.img_to_array(
+            img
+        )
 
+
+        img_array = np.expand_dims(
             img_array,
+            axis=0
+        )
 
+
+        img_array = preprocess_input(
+            img_array
+        )
+
+
+        # ----------------------------------------------------
+        # MODEL PREDICTION
+        # ----------------------------------------------------
+
+        prediction = model.predict(
+            img_array,
             verbose=0
-
         )
 
 
@@ -830,15 +817,12 @@ def predict():
 
 
         confidence = round(
-
             float(
                 np.max(
                     prediction
                 ) * 100
             ),
-
             2
-
         )
 
 
@@ -869,7 +853,7 @@ def predict():
 
 
 # ============================================================
-# EXISTING HEALTH ENDPOINT - UNCHANGED
+# HEALTH ENDPOINT — UNCHANGED
 # ============================================================
 
 @app.route(
