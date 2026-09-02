@@ -35,6 +35,7 @@ function App() {
         <Route path="/" element={user ? <Layout user={user} onLogout={logout} /> : <Navigate to="/login" />}>
           <Route index element={<Dashboard user={user} />} />
           <Route path="gis" element={<GISMapping user={user} />} />
+          <Route path="irrigation" element={<Irrigation user={user} />} />
           <Route path="knowledge" element={<KnowledgeHub user={user} />} />
           <Route path="crop-disease" element={<CropDisease user={user} />} />
           <Route path="forum" element={<Forum user={user} />} />
