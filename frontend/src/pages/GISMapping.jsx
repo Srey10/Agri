@@ -10,19 +10,26 @@ import './GISMapping.css'
 // The farm has a diagonal NW road boundary and is ~8-10 hectares
 export const FARM_BOUNDARY = {
   type: 'Feature',
-  properties: { name: 'Mote Patil Sugarcane Farms' },
+  properties: {
+    name: 'Mote Patil Sugarcane Farms'
+  },
   geometry: {
     type: 'Polygon',
     coordinates: [[
-      [74.8985, 19.4330],   // NW corner (along diagonal road)
-      [74.9010, 19.4345],   // North tip
-      [74.9045, 19.4340],   // NE corner
-      [74.9055, 19.4315],   // East
-      [74.9050, 19.4285],   // SE corner
-      [74.9020, 19.4270],   // South
-      [74.8990, 19.4275],   // SW corner
-      [74.8975, 19.4300],   // West
-      [74.8985, 19.4330],   // close ring
+      [74.900480, 19.431147],
+      [74.901019, 19.431153],
+      [74.901906, 19.431138],
+      [74.901972, 19.430525],
+      [74.901574, 19.430661],
+      [74.901609, 19.430316],
+      [74.901629, 19.429984],
+      [74.901130, 19.430051],
+      [74.900718, 19.430128],
+      [74.900242, 19.430202],
+      [74.899713, 19.430285],
+      [74.900040, 19.430611],
+      [74.900324, 19.430935],
+      [74.900480, 19.431147]
     ]]
   }
 }
@@ -64,7 +71,7 @@ export function healthColor(status) {
 export function buildZones(farmBoundary) {
   const bbox = turf.bbox(farmBoundary)
   // cellSide ~0.002 degrees produces a 4×4 grid over the actual ~0.007° farm bbox
-  const grid = turf.squareGrid(bbox, 0.002, { units: 'degrees' })
+  const grid = turf.squareGrid(bbox, 0.0005, { units: 'degrees' })
 
   const zones = []
   grid.features.forEach((cell, idx) => {
