@@ -32,6 +32,14 @@ const BASE_SCHEDULE = [
   { zone: 'East Block – Zone 13-16', crop: 'ऊस (Sugarcane)', startHour: 6,  endHour: 7,  baseWater: 4.8, baseMoisture: 68 },
 ]
 
+// Ideal/benchmark values for Co-86032 sugarcane (general growth-stage averages)
+const SUGARCANE_BENCHMARK = {
+  soilMoisture: { min: 60, max: 80 },   // %
+  temp: { min: 26, max: 34 },           // °C — optimal growth range
+  et0: { min: 3.5, max: 5.5 },          // mm/day — normal water loss
+  humidity: { min: 60, max: 80 },       // %
+}
+
 // Simplified Penman-Monteith ET₀ estimate for sugarcane
 // Uses temperature and humidity from live weather
 function calcET0(tempC, humidity) {
@@ -96,6 +104,71 @@ function buildLiveSchedule(weather) {
       note,
     }
   })
+}
+
+// Score a live value against a benchmark min/max range.
+// Returns a graduated 0-100 score based on distance from the ideal range,
+// instead of a strict pass/fail, so the dashboard always shows a meaningful number.
+function scoreRange(value, min, max) {
+  const mid = (min + max) / 2
+  const halfRange = (max - min) / 2
+
+  if (value >= min && value <= max) {
+    // Inside range: score 80-100, higher the closer to the midpoint
+    const distFromMid = Math.abs(value - mid)
+    const score = Math.round(100 - (distFromMid / halfRange) * 20)
+    return { status: 'optimal', message: 'Within ideal range', score }
+  }
+
+  // Outside range: score falls off the further away it is,
+  // reaching 0 once the value is ~1x the range-width beyond the edge
+  const dist = value < min ? min - value : value - max
+  const status = value < min ? 'low' : 'high'
+  const message = value < min ? `Below ideal (min ${min})` : `Above ideal (max ${max})`
+  const score = Math.max(0, Math.round(100 - (dist / halfRange) * 60))
+  return { status, message, score }
+}
+
+// Compare live farm conditions against the sugarcane benchmark
+function compareToBenchmark(weather, avgMoisture) {
+  if (!weather) return null
+  const b = SUGARCANE_BENCHMARK
+  const et0 = calcET0(weather.temp, weather.humidity)
+
+  const checks = [
+    { label: 'Soil Moisture', value: avgMoisture, unit: '%', ...scoreRange(avgMoisture, b.soilMoisture.min, b.soilMoisture.max) },
+    { label: 'Field Temperature', value: weather.temp, unit: '°C', ...scoreRange(weather.temp, b.temp.min, b.temp.max) },
+    { label: 'ET₀ (Water Loss Rate)', value: Number(et0.toFixed(1)), unit: 'mm/day', ...scoreRange(et0, b.et0.min, b.et0.max) },
+    { label: 'Humidity', value: weather.humidity, unit: '%', ...scoreRange(weather.humidity, b.humidity.min, b.humidity.max) },
+  ]
+
+  const overallScore = Math.round(checks.reduce((sum, c) => sum + c.score, 0) / checks.length)
+  return { checks, overallScore }
+}
+
+// Combines rainfall, ET0 (water loss), and soil moisture into one irrigation decision
+function generateIrrigationAdvisory(weather, avgMoisture) {
+  if (!weather) return { level: 'loading', text: 'Fetching live data for irrigation advisory...' }
+
+  const et0 = calcET0(weather.temp, weather.humidity)
+  const rain = weather.precipitation
+  const netBalance = rain - et0 // positive = gaining water, negative = losing water
+
+  let level, text
+  if (rain > 5) {
+    level = 'pause'
+    text = `Heavy rainfall (${rain}mm) is naturally saturating the soil. Irrigation should pause — net balance is +${netBalance.toFixed(1)}mm today.`
+  } else if (avgMoisture < 35 && netBalance < 0) {
+    level = 'urgent'
+    text = `Soil moisture is critically low (${avgMoisture}%) and ET₀ (${et0.toFixed(1)}mm/day) exceeds rainfall (${rain}mm). Net deficit of ${Math.abs(netBalance).toFixed(1)}mm/day — irrigate urgently.`
+  } else if (avgMoisture < 50 && netBalance < 1) {
+    level = 'moderate'
+    text = `Moisture trending down (${avgMoisture}%). ET₀ (${et0.toFixed(1)}mm/day) is only partly offset by rainfall. Irrigate within 24 hours.`
+  } else {
+    level = 'ok'
+    text = `Soil moisture (${avgMoisture}%) is stable. Rainfall is keeping pace with ET₀ (${et0.toFixed(1)}mm/day). No irrigation needed right now.`
+  }
+  return { level, text, et0, netBalance }
 }
 
 function getWeatherInfo(code) {
@@ -184,14 +257,11 @@ export default function Irrigation() {
     liveSchedule.reduce((sum, s) => sum + s.moisture, 0) / liveSchedule.length
   )
 
-  // Derive AI recommendation from live weather
-  const aiRec = currentWeather
-    ? currentWeather.precipitation > 3
-      ? `Live rainfall of ${currentWeather.precipitation}mm detected at farm. Irrigation paused on all blocks — saving ~${(currentWeather.precipitation * 0.4).toFixed(1)} M³/Ha. Resume when rain stops.`
-      : currentWeather.temp > 35
-      ? `Temperature at ${currentWeather.temp}°C — above sugarcane stress threshold (35°C). ET₀ elevated. Water demand increased by ${Math.round((currentWeather.temp - 35) * 3 + 15)}%. Prioritise South Block (moisture 31%).`
-      : `Conditions stable at ${currentWeather.temp}°C, ${currentWeather.humidity}% humidity. ET₀ = ${calcET0(currentWeather.temp, currentWeather.humidity).toFixed(1)} mm/day. Schedule running normally — ${liveSchedule.filter(s => s.status === 'Drought Risk').length} block(s) need attention.`
-    : 'Fetching live weather data for irrigation recommendation...'
+  // Combined rainfall + ET0 + soil moisture irrigation advisory
+  const advisory = generateIrrigationAdvisory(currentWeather, avgMoisture)
+
+  // Live conditions compared against the sugarcane benchmark
+  const benchmarkData = compareToBenchmark(currentWeather, avgMoisture)
 
   return (
     <div className="irrigation-page fade-in">
@@ -248,12 +318,14 @@ export default function Irrigation() {
         ))}
       </div>
 
-      {/* AI Recommendation — live */}
-      <div className="ai-rec-banner">
-        <div className="ai-rec-icon">🤖</div>
+      {/* Irrigation Advisory — combines rainfall + ET0 + soil moisture, live */}
+      <div className={`ai-rec-banner ai-rec-${advisory.level}`}>
+        <div className="ai-rec-icon">
+          {advisory.level === 'urgent' ? '🚨' : advisory.level === 'pause' ? '🌧️' : advisory.level === 'moderate' ? '⚠️' : '🤖'}
+        </div>
         <div className="ai-rec-content">
-          <div className="ai-rec-title">AI Recommendation – {FARM_NAME}</div>
-          <div className="ai-rec-text">{aiRec}</div>
+          <div className="ai-rec-title">Irrigation Advisory – {FARM_NAME}</div>
+          <div className="ai-rec-text">{advisory.text}</div>
         </div>
         <button className="btn-primary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>Apply Adjustment</button>
       </div>
@@ -296,9 +368,9 @@ export default function Irrigation() {
         {/* Right Panel */}
         <div className="irr-right-col">
           <div className="irr-tabs">
-            {['schedule', 'weather'].map(t => (
+            {['schedule', 'weather', 'benchmark'].map(t => (
               <button key={t} className={`irr-tab ${activeTab === t ? 'active' : ''}`} onClick={() => setActiveTab(t)}>
-                {t === 'schedule' ? '📅 Schedule' : '🌦️ Weather'}
+                {t === 'schedule' ? '📅 Schedule' : t === 'weather' ? '🌦️ Weather' : '📊 Benchmark'}
               </button>
             ))}
           </div>
@@ -409,6 +481,43 @@ export default function Irrigation() {
                 <button className="btn-ghost" style={{ width: '100%', marginTop: 8, fontSize: 11 }} onClick={fetchFarmWeather}>
                   🔄 Refresh Weather
                 </button>
+              )}
+            </div>
+          )}
+
+          {/* Benchmark Tab — live conditions vs ideal sugarcane ranges */}
+          {activeTab === 'benchmark' && (
+            <div className="irr-benchmark">
+              {benchmarkData ? (
+                <>
+                  <div className="benchmark-score-banner">
+                    <div className="benchmark-score-val">{benchmarkData.overallScore}%</div>
+                    <div className="benchmark-score-label">Aligned with Co-86032 Sugarcane Benchmark</div>
+                  </div>
+                  {benchmarkData.checks.map((c, i) => (
+                    <div key={i} className="benchmark-row">
+                      <div className="benchmark-row-top">
+                        <span>{c.label}</span>
+                        <span className={`badge ${c.status === 'optimal' ? 'badge-green' : c.status === 'low' ? 'badge-blue' : 'badge-orange'}`}>
+                          {c.status === 'optimal' ? '✓ Optimal' : c.status === 'low' ? '↓ Low' : '↑ High'}
+                        </span>
+                      </div>
+                      <div className="benchmark-row-val">{c.value}{c.unit}</div>
+                      <div className="benchmark-row-msg">{c.message}</div>
+                      <div className="progress-bar" style={{ marginTop: 6 }}>
+                        <div
+                          className="progress-fill"
+                          style={{
+                            width: `${c.score}%`,
+                            background: c.status === 'optimal' ? 'var(--green-accent)' : c.status === 'low' ? 'var(--blue)' : 'var(--orange)'
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading benchmark comparison...</div>
               )}
             </div>
           )}
