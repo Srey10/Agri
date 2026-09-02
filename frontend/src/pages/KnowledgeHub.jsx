@@ -7,32 +7,21 @@ const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
 const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
 
 const LANGS = {
-  en: 'English', hi: 'हिंदी', pa: 'ਪੰਜਾਬੀ', mr: 'मराठी',
-  ta: 'தமிழ்', te: 'తెలుగు', bn: 'বাংলা', gu: 'ગુજરાતી'
+  en: 'English', hi: 'हिंदी',mr: 'मराठी'
 }
 
 const TRANSLATIONS = {
   greeting: {
     en: "Hello! I'm AgriAdvisor AI. Ask me anything about crops, pests, irrigation, or weather!",
     hi: "नमस्ते! मैं AgriAdvisor AI हूँ। फसल, कीट, सिंचाई, या मौसम के बारे में कुछ भी पूछें!",
-    pa: "ਸਤ ਸ੍ਰੀ ਅਕਾਲ! ਮੈਂ AgriAdvisor AI ਹਾਂ। ਫਸਲਾਂ, ਕੀੜੇ, ਸਿੰਚਾਈ ਜਾਂ ਮੌਸਮ ਬਾਰੇ ਕੁਝ ਵੀ ਪੁੱਛੋ!",
     mr: "नमस्कार! मी AgriAdvisor AI आहे. पीक, कीड, सिंचन किंवा हवामानाबद्दल काहीही विचारा!",
-    ta: "வணக்கம்! நான் AgriAdvisor AI. பயிர், பூச்சி, நீர்ப்பாசனம் அல்லது வானிலை பற்றி கேளுங்கள்!",
-    te: "నమస్కారం! నేను AgriAdvisor AI. పంటలు, చీడలు, నీటిపారుదల గురించి అడగండి!",
-    bn: "নমস্কার! আমি AgriAdvisor AI। ফসল, কীটপতঙ্গ, সেচ বা আবহাওয়া সম্পর্কে জিজ্ঞাসা করুন!",
-    gu: "નમસ્તે! હું AgriAdvisor AI છું. પાક, જીવાત, સિંચાઈ અથવા હવામાન વિશે કંઈ પણ પૂછો!"
   }
 }
 
 const quickResponses = {
   en: ['Weather for tomorrow?', 'Irrigation schedule?', 'Crop health check', 'Market prices', 'Pest control tips', 'Best fertilizer?'],
   hi: ['कल का मौसम?', 'सिंचाई कार्यक्रम?', 'फसल स्वास्थ्य जांच', 'बाजार भाव', 'कीट नियंत्रण', 'उर्वरक सलाह'],
-  pa: ['ਕੱਲ੍ਹ ਦਾ ਮੌਸਮ?', 'ਸਿੰਚਾਈ ਸਮਾਂ-ਸਾਰਣੀ?', 'ਫਸਲ ਸਿਹਤ', 'ਮਾਰਕਿਟ ਭਾਅ', 'ਕੀੜੇ ਕੰਟਰੋਲ', 'ਖਾਦ ਸਲਾਹ'],
   mr: ['उद्याचे हवामान?', 'सिंचन वेळापत्रक?', 'पीक आरोग्य तपास', 'बाजार भाव', 'कीड नियंत्रण', 'खत सल्ला'],
-  ta: ['நாளை வானிலை?', 'நீர்ப்பாசன அட்டவணை?', 'பயிர் சுகாதாரம்', 'சந்தை விலை', 'பூச்சி கட்டுப்பாடு', 'உர ஆலோசனை'],
-  te: ['రేపటి వాతావరణం?', 'నీటిపారుదల షెడ్యూల్?', 'పంట ఆరోగ్యం', 'మార్కెట్ ధరలు', 'చీడ నియంత్రణ', 'ఎరువు సలహా'],
-  bn: ['আগামীকালের আবহাওয়া?', 'সেচ সময়সূচী?', 'ফসল স্বাস্থ্য', 'বাজার মূল্য', 'কীটনাশক', 'সার পরামর্শ'],
-  gu: ['કાલનું હવામાન?', 'સિંચાઈ સમયપત્રક?', 'પાક સ્વાસ્થ્ય', 'બજાર ભાવ', 'જંતુ નિયંત્રણ', 'ખાતર સલાહ'],
 }
 
 const aiResponses = [
@@ -127,7 +116,7 @@ export default function KnowledgeHub({ user }) {
         }));
 
       const model = genAI.getGenerativeModel({
-        model: "gemini-2.5-flash", 
+        model: "gemini-3.6-flash", 
         systemInstruction: `You are AgriAdvisor, an expert AI agricultural advisor specifically tailored for farming in India. The current selected language is ${LANGS[lang] || 'English'}. Keep your answers relatively short, professional, and directly related to agriculture, crops, pests, irrigation, or weather. Format your text nicely using markdown formatting where appropriate.`
       });
 
