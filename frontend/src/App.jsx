@@ -5,9 +5,7 @@ import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
 import GISMapping from './pages/GISMapping'
 import Irrigation from './pages/Irrigation'
-import Traceability from './pages/Traceability'
 import KnowledgeHub from './pages/KnowledgeHub'
-import MarketPlace from './pages/MarketPlace'
 import CropDisease from './pages/CropDisease'
 import Forum from './pages/Forum'
 import ForumPost from './pages/ForumPost'
@@ -38,9 +36,7 @@ function App() {
           <Route index element={<Dashboard user={user} />} />
           <Route path="gis" element={<GISMapping user={user} />} />
           <Route path="irrigation" element={<Irrigation user={user} />} />
-          <Route path="traceability" element={<Traceability user={user} />} />
           <Route path="knowledge" element={<KnowledgeHub user={user} />} />
-          <Route path="marketplace" element={<MarketPlace user={user} />} />
           <Route path="crop-disease" element={<CropDisease user={user} />} />
           <Route path="forum" element={<Forum user={user} />} />
           <Route path="forum/:id" element={<ForumPost user={user} />} />

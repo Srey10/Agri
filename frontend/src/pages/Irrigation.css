@@ -198,3 +198,153 @@
   border-color: rgba(59,130,246,0.4);
   background: rgba(59,130,246,0.06);
 }
+
+/* ============================================
+   Irrigation Advisory banner — color varies by urgency level
+   Add these alongside your existing .ai-rec-banner styles
+   ============================================ */
+
+.ai-rec-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-card2);
+  margin: 16px 0;
+}
+
+.ai-rec-icon {
+  font-size: 22px;
+  flex-shrink: 0;
+}
+
+.ai-rec-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-rec-title {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 4px;
+  color: var(--text-primary);
+}
+
+.ai-rec-text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+/* Level-specific accents */
+.ai-rec-ok {
+  border-left: 3px solid var(--green-accent);
+}
+.ai-rec-ok .ai-rec-title {
+  color: var(--green-accent);
+}
+
+.ai-rec-moderate {
+  border-left: 3px solid var(--orange);
+  background: rgba(249, 115, 22, 0.06);
+}
+.ai-rec-moderate .ai-rec-title {
+  color: var(--orange);
+}
+
+.ai-rec-urgent {
+  border-left: 3px solid var(--red);
+  background: rgba(239, 68, 68, 0.08);
+}
+.ai-rec-urgent .ai-rec-title {
+  color: var(--red);
+}
+.ai-rec-urgent .ai-rec-icon {
+  animation: pulse-warn 1.4s infinite;
+}
+
+.ai-rec-pause {
+  border-left: 3px solid var(--blue);
+  background: rgba(59, 130, 246, 0.06);
+}
+.ai-rec-pause .ai-rec-title {
+  color: var(--blue);
+}
+
+.ai-rec-loading {
+  border-left: 3px solid var(--text-muted);
+}
+
+@keyframes pulse-warn {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.1); }
+}
+
+/* ============================================
+   Benchmark tab
+   ============================================ */
+
+.irr-benchmark {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.benchmark-score-banner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 20px 12px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(34,197,94,0.08), rgba(59,130,246,0.06));
+  border: 1px solid var(--border);
+  margin-bottom: 6px;
+}
+
+.benchmark-score-val {
+  font-size: 34px;
+  font-weight: 800;
+  color: var(--green-accent);
+  line-height: 1.1;
+}
+
+.benchmark-score-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.benchmark-row {
+  background: var(--bg-card2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.benchmark-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.benchmark-row-val {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.benchmark-row-msg {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}

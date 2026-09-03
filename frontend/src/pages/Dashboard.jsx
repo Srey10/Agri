@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 import { useState, useEffect } from 'react'
 import { Thermometer, Droplets, Wind, AlertTriangle, Clock, MapPin } from 'lucide-react'
 import MapView from '../components/MapView'
@@ -147,17 +148,74 @@ export default function Dashboard({ user }) {
   }, [])
 
   // Fetch live rainfall per zone and classify health
-  useEffect(() => {
-    fetchRainfall(partialZones).then(rainfallValues => {
+// Fetch live rainfall + Sentinel-2 NDVI per zone
+useEffect(() => {
+  const loadDashboardZones = async () => {
+    try {
+      const rainfallValues = await fetchRainfall(partialZones)
+
+      const ndviValues = await Promise.all(
+        partialZones.map(async (zone) => {
+          try {
+            const response = await fetch(
+              'http://127.0.0.1:5000/ndvi',
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                  geometry: zone.geometry.geometry
+                })
+              }
+            )
+
+            const data = await response.json()
+
+            console.log(
+              `Dashboard Zone ${zone.id + 1} Sentinel NDVI:`,
+              data
+            )
+
+            return data.ndvi
+          } catch (error) {
+            console.error(
+              `Dashboard NDVI failed for zone ${zone.id + 1}:`,
+              error
+            )
+            return null
+          }
+        })
+      )
+
       const enriched = partialZones.map((z, i) => {
         const rainfall = rainfallValues[i]
-        const health = classifyHealth(z.ndvi, rainfall)
-        return { ...z, rainfall, health, color: healthColor(health) }
+        const ndvi = ndviValues[i]
+
+        const health =
+          ndvi !== null
+            ? classifyHealth(ndvi, rainfall)
+            : 'Moderate'
+
+        return {
+          ...z,
+          ndvi,
+          rainfall,
+          health,
+          color: healthColor(health)
+        }
       })
+
       setDashZones(enriched)
+    } catch (error) {
+      console.error('Dashboard GIS data loading failed:', error)
+    } finally {
       setZonesLoading(false)
-    })
-  }, [])
+    }
+  }
+
+  loadDashboardZones()
+}, [])
 
   const healthyCnt = dashZones.filter(z => z.health === 'Healthy').length
   const moderateCnt = dashZones.filter(z => z.health === 'Moderate').length

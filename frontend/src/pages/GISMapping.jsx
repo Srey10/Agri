@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { useState, useEffect } from 'react'
 import * as turf from '@turf/turf'
 import MapView from '../components/MapView'
@@ -9,23 +10,31 @@ import './GISMapping.css'
 // The farm has a diagonal NW road boundary and is ~8-10 hectares
 export const FARM_BOUNDARY = {
   type: 'Feature',
-  properties: { name: 'Mote Patil Sugarcane Farms' },
+  properties: {
+    name: 'Mote Patil Sugarcane Farms'
+  },
   geometry: {
     type: 'Polygon',
     coordinates: [[
-      [74.8985, 19.4330],   // NW corner (along diagonal road)
-      [74.9010, 19.4345],   // North tip
-      [74.9045, 19.4340],   // NE corner
-      [74.9055, 19.4315],   // East
-      [74.9050, 19.4285],   // SE corner
-      [74.9020, 19.4270],   // South
-      [74.8990, 19.4275],   // SW corner
-      [74.8975, 19.4300],   // West
-      [74.8985, 19.4330],   // close ring
+      [74.900480, 19.431147],
+      [74.901019, 19.431153],
+      [74.901906, 19.431138],
+      [74.901972, 19.430525],
+      [74.901574, 19.430661],
+      [74.901609, 19.430316],
+      [74.901629, 19.429984],
+      [74.901130, 19.430051],
+      [74.900718, 19.430128],
+      [74.900242, 19.430202],
+      [74.899713, 19.430285],
+      [74.900040, 19.430611],
+      [74.900324, 19.430935],
+      [74.900480, 19.431147]
     ]]
   }
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const NDVI_VALUES = [
   0.72, 0.45, 0.31, 0.68,
   0.55, 0.82, 0.38, 0.61,
@@ -33,6 +42,7 @@ export const NDVI_VALUES = [
   0.50, 0.65, 0.35, 0.90,
 ]
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const SOIL_VALUES = [
   'Clay',  'Loam',  'Sandy', 'Clay',
   'Loam',  'Sandy', 'Clay',  'Loam',
@@ -40,6 +50,7 @@ export const SOIL_VALUES = [
   'Clay',  'Loam',  'Sandy', 'Clay',
 ]
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function classifyHealth(ndvi, rainfall) {
   if (rainfall === null || rainfall === undefined) {
     if (ndvi >= 0.65) return 'Healthy'
@@ -51,6 +62,7 @@ export function classifyHealth(ndvi, rainfall) {
   return 'Moderate'
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function healthColor(status) {
   const colors = { Healthy: '#22c55e', Moderate: '#eab308', Problematic: '#ef4444' }
   return colors[status]
@@ -59,7 +71,7 @@ export function healthColor(status) {
 export function buildZones(farmBoundary) {
   const bbox = turf.bbox(farmBoundary)
   // cellSide ~0.002 degrees produces a 4×4 grid over the actual ~0.007° farm bbox
-  const grid = turf.squareGrid(bbox, 0.002, { units: 'degrees' })
+  const grid = turf.squareGrid(bbox, 0.0005, { units: 'degrees' })
 
   const zones = []
   grid.features.forEach((cell, idx) => {
@@ -94,6 +106,7 @@ export function buildZones(farmBoundary) {
   return zones
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export async function fetchRainfall(zones) {
   const results = await Promise.all(
     zones.map(z =>
@@ -116,20 +129,91 @@ export default function GISMapping() {
   const [layerBoundary, setLayerBoundary] = useState(true)
 
   useEffect(() => {
+  const loadGISData = async () => {
     const partial = buildZones(FARM_BOUNDARY)
+
     setZones(partial)
     setLoading(true)
 
-    fetchRainfall(partial).then(rainfallValues => {
+    try {
+      // Get rainfall
+      const rainfallValues = await fetchRainfall(partial)
+
+      // Get real Sentinel-2 NDVI for every zone
+      const ndviValues = await Promise.all(
+        partial.map(async (zone) => {
+          try {
+            const response = await fetch(
+              'http://127.0.0.1:5000/ndvi',
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                  geometry: zone.geometry.geometry
+                })
+              }
+            )
+
+            const data = await response.json()
+
+            console.log(
+              `Zone ${zone.id + 1} Sentinel NDVI:`,
+              data
+            )
+
+            return data.ndvi
+          } catch (error) {
+            console.error(
+              `NDVI failed for zone ${zone.id + 1}:`,
+              error
+            )
+
+            return null
+          }
+        })
+      )
+
+      // Combine Sentinel NDVI + rainfall
       const enriched = partial.map((z, i) => {
+
         const rainfall = rainfallValues[i]
-        const health = classifyHealth(z.ndvi, rainfall)
-        return { ...z, rainfall, health, color: healthColor(health) }
+        const ndvi = ndviValues[i]
+
+        const health =
+          ndvi !== null
+            ? classifyHealth(ndvi, rainfall)
+            : 'Moderate'
+
+        return {
+          ...z,
+          ndvi,
+          rainfall,
+          health,
+          color: healthColor(health)
+        }
       })
+
       setZones(enriched)
+
+    } catch (error) {
+
+      console.error(
+        'GIS data loading failed:',
+        error
+      )
+
+    } finally {
+
       setLoading(false)
-    })
-  }, [])
+
+    }
+  }
+
+  loadGISData()
+
+}, [])
 
   const totalAreaHa = zones.reduce((sum, z) => sum + (z.areaHa || 0), 0).toFixed(2)
   const healthyCnt = zones.filter(z => z.health === 'Healthy').length

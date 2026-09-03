@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
-import { MapContainer, TileLayer, Polygon, CircleMarker, Popup } from 'react-leaflet'
-import { Droplets, Thermometer, Calendar, Plus, Download, Activity, MapPin, Loader } from 'lucide-react'
+/* eslint-disable no-unused-vars */
+import { useState, useEffect, useRef } from 'react'
+import { MapContainer, TileLayer, Polygon, Popup } from 'react-leaflet'
+import { Droplets, Thermometer, Calendar, Plus, Download, MapPin } from 'lucide-react'
 import './Irrigation.css'
 
 // Mote Patil Sugarcane Farms — exact coordinates
@@ -9,16 +10,26 @@ const FARM_LNG = 74.9010
 const FARM_NAME = 'Mote Patil Sugarcane Farms, Maharashtra'
 
 // Farm boundary polygon for map (same as GISMapping)
+// Mote Patil Sugarcane Farms — exact traced boundary
 const farmPolygon = [
-  [19.4330, 74.8985],
-  [19.4345, 74.9010],
-  [19.4340, 74.9045],
-  [19.4315, 74.9055],
-  [19.4285, 74.9050],
-  [19.4270, 74.9020],
-  [19.4275, 74.8990],
-  [19.4300, 74.8975],
+  [19.431147, 74.900480],
+  [19.431153, 74.901019],
+  [19.431138, 74.901906],
+  [19.430525, 74.901972],
+  [19.430661, 74.901574],
+  [19.430316, 74.901609],
+  [19.429984, 74.901629],
+  [19.430051, 74.901130],
+  [19.430128, 74.900718],
+  [19.430202, 74.900242],
+  [19.430285, 74.899713],
+  [19.430611, 74.900040],
+  [19.430935, 74.900324],
+  [19.431147, 74.900480],
 ]
+
+// How often the weather API is refreshed automatically (5 minutes)
+const WEATHER_REFRESH_MS = 5 * 60 * 1000
 
 // Base schedule — times and base water demand per block
 // Status, actual water demand, and notes are computed from live weather
@@ -28,6 +39,14 @@ const BASE_SCHEDULE = [
   { zone: 'South Block – Zone 9-12', crop: 'ऊस (Sugarcane)', startHour: 18, endHour: 20, baseWater: 6.2, baseMoisture: 31 },
   { zone: 'East Block – Zone 13-16', crop: 'ऊस (Sugarcane)', startHour: 6,  endHour: 7,  baseWater: 4.8, baseMoisture: 68 },
 ]
+
+// Ideal/benchmark values for Co-86032 sugarcane (general growth-stage averages)
+const SUGARCANE_BENCHMARK = {
+  soilMoisture: { min: 60, max: 80 },   // %
+  temp: { min: 26, max: 34 },           // °C — optimal growth range
+  et0: { min: 3.5, max: 5.5 },          // mm/day — normal water loss
+  humidity: { min: 60, max: 80 },       // %
+}
 
 // Simplified Penman-Monteith ET₀ estimate for sugarcane
 // Uses temperature and humidity from live weather
@@ -39,8 +58,13 @@ function calcET0(tempC, humidity) {
   return Math.max(0.5, Math.min(et0, 8))
 }
 
-// Derive live schedule from weather conditions
-function buildLiveSchedule(weather) {
+// Derive live schedule from weather conditions + real satellite soil moisture.
+// satMoisture (from NASA POWER) becomes the true baseline; each block keeps
+// its original relative offset so zones still show realistic variation
+// instead of one identical number everywhere.
+function buildLiveSchedule(weather, satMoisture) {
+  const avgStaticBase = BASE_SCHEDULE.reduce((s, b) => s + b.baseMoisture, 0) / BASE_SCHEDULE.length
+
   if (!weather) return BASE_SCHEDULE.map(b => ({
     ...b,
     time: `${String(b.startHour).padStart(2,'0')}:00 – ${String(b.endHour).padStart(2,'0')}:00`,
@@ -58,6 +82,13 @@ function buildLiveSchedule(weather) {
   const et0 = calcET0(temp, humidity)
 
   return BASE_SCHEDULE.map(b => {
+    // Anchor this block's moisture to the real satellite reading, keeping
+    // its original offset from the fleet average for per-zone variation
+    const offset = b.baseMoisture - avgStaticBase
+    const liveMoisture = satMoisture
+      ? Math.max(5, Math.min(95, Math.round(satMoisture.surfacePct + offset)))
+      : b.baseMoisture
+
     // Adjust water demand based on ET₀ and rainfall
     const rainReduction = rain > 5 ? 0.5 : rain > 2 ? 0.75 : rain > 0.5 ? 0.9 : 1.0
     const tempFactor = temp > 38 ? 1.25 : temp > 35 ? 1.15 : temp > 32 ? 1.05 : 1.0
@@ -68,9 +99,9 @@ function buildLiveSchedule(weather) {
     if (rain > 5) {
       status = 'Paused – Rain'
       note = `Active rainfall ${rain}mm — irrigation paused automatically`
-    } else if (b.baseMoisture < 35 && rain < 1) {
+    } else if (liveMoisture < 35 && rain < 1) {
       status = 'Drought Risk'
-      note = `Moisture critically low. ET₀ = ${et0.toFixed(1)} mm/day. Urgent irrigation needed.`
+      note = `Moisture critically low (satellite-estimated). ET₀ = ${et0.toFixed(1)} mm/day. Urgent irrigation needed.`
     } else if (currentHour >= b.endHour) {
       status = 'Complete'
       note = rain > 0.5 ? `Completed. ${rain}mm rain supplemented — water saved.` : `Completed on schedule.`
@@ -88,20 +119,121 @@ function buildLiveSchedule(weather) {
       ...b,
       time: `${String(b.startHour).padStart(2,'0')}:00 – ${String(b.endHour).padStart(2,'0')}:00`,
       water: `${adjustedWater} M³/Ha`,
-      moisture: b.baseMoisture,
+      moisture: liveMoisture,
       status,
       note,
     }
   })
 }
 
-// Sensors placed within the actual farm boundary
-const sensors = [
-  { id: 'MPS-S01', zone: 'North Block', moisture: 72, temp: 32, battery: 88, status: 'active', lat: 19.4338, lng: 74.9010 },
-  { id: 'MPS-S02', zone: 'Central Block', moisture: 55, temp: 34, battery: 74, status: 'active', lat: 19.4308, lng: 74.9020 },
-  { id: 'MPS-S03', zone: 'South Block', moisture: 31, temp: 35, battery: 45, status: 'warning', lat: 19.4280, lng: 74.9030 },
-  { id: 'MPS-S04', zone: 'East Block', moisture: 68, temp: 33, battery: 91, status: 'active', lat: 19.4310, lng: 74.9045 },
-]
+// Score a live value against a benchmark min/max range.
+// Returns a graduated 0-100 score based on distance from the ideal range,
+// instead of a strict pass/fail, so the dashboard always shows a meaningful number.
+function scoreRange(value, min, max) {
+  const mid = (min + max) / 2
+  const halfRange = (max - min) / 2
+
+  if (value >= min && value <= max) {
+    // Inside range: score 80-100, higher the closer to the midpoint
+    const distFromMid = Math.abs(value - mid)
+    const score = Math.round(100 - (distFromMid / halfRange) * 20)
+    return { status: 'optimal', message: 'Within ideal range', score }
+  }
+
+  // Outside range: score falls off the further away it is,
+  // reaching 0 once the value is ~1x the range-width beyond the edge
+  const dist = value < min ? min - value : value - max
+  const status = value < min ? 'low' : 'high'
+  const message = value < min ? `Below ideal (min ${min})` : `Above ideal (max ${max})`
+  const score = Math.max(0, Math.round(100 - (dist / halfRange) * 60))
+  return { status, message, score }
+}
+
+// Compare live farm conditions against the sugarcane benchmark
+function compareToBenchmark(weather, avgMoisture) {
+  if (!weather) return null
+  const b = SUGARCANE_BENCHMARK
+  const et0 = calcET0(weather.temp, weather.humidity)
+
+  const checks = [
+    { label: 'Soil Moisture', value: avgMoisture, unit: '%', ...scoreRange(avgMoisture, b.soilMoisture.min, b.soilMoisture.max) },
+    { label: 'Field Temperature', value: weather.temp, unit: '°C', ...scoreRange(weather.temp, b.temp.min, b.temp.max) },
+    { label: 'ET₀ (Water Loss Rate)', value: Number(et0.toFixed(1)), unit: 'mm/day', ...scoreRange(et0, b.et0.min, b.et0.max) },
+    { label: 'Humidity', value: weather.humidity, unit: '%', ...scoreRange(weather.humidity, b.humidity.min, b.humidity.max) },
+  ]
+
+  const overallScore = Math.round(checks.reduce((sum, c) => sum + c.score, 0) / checks.length)
+  return { checks, overallScore }
+}
+
+// Combines rainfall, ET0 (water loss), and soil moisture into one irrigation decision
+function generateIrrigationAdvisory(weather, avgMoisture) {
+  if (!weather) return { level: 'loading', text: 'Fetching live data for irrigation advisory...' }
+
+  const et0 = calcET0(weather.temp, weather.humidity)
+  const rain = weather.precipitation
+  const netBalance = rain - et0 // positive = gaining water, negative = losing water
+
+  let level, text
+  if (rain > 5) {
+    level = 'pause'
+    text = `Heavy rainfall (${rain}mm) is naturally saturating the soil. Irrigation should pause — net balance is +${netBalance.toFixed(1)}mm today.`
+  } else if (avgMoisture < 35 && netBalance < 0) {
+    level = 'urgent'
+    text = `Soil moisture is critically low (${avgMoisture}%) and ET₀ (${et0.toFixed(1)}mm/day) exceeds rainfall (${rain}mm). Net deficit of ${Math.abs(netBalance).toFixed(1)}mm/day — irrigate urgently.`
+  } else if (avgMoisture < 50 && netBalance < 1) {
+    level = 'moderate'
+    text = `Moisture trending down (${avgMoisture}%). ET₀ (${et0.toFixed(1)}mm/day) is only partly offset by rainfall. Irrigate within 24 hours.`
+  } else {
+    level = 'ok'
+    text = `Soil moisture (${avgMoisture}%) is stable. Rainfall is keeping pace with ET₀ (${et0.toFixed(1)}mm/day). No irrigation needed right now.`
+  }
+  return { level, text, et0, netBalance }
+}
+
+// ── Real satellite soil moisture: NASA POWER API ──────────────────────────
+// Uses GWETTOP (surface wetness) and GWETROOT (root-zone wetness), both
+// expressed as a 0-1 fraction of saturation. No API key, no HDF5 parsing —
+// plain JSON over HTTPS, same pattern as the Open-Meteo weather call below.
+// Data has ~2-3 day satellite processing latency, so we request a 7-day
+// window and use the most recent day that has a valid reading.
+function formatDateForNASA(d) {
+  return d.toISOString().slice(0, 10).replace(/-/g, '')
+}
+
+async function fetchSatelliteSoilMoisture(lat, lng) {
+  const end = new Date()
+  const start = new Date()
+  start.setDate(start.getDate() - 7)
+
+  const url =
+    `https://power.larc.nasa.gov/api/temporal/daily/point` +
+    `?parameters=GWETTOP,GWETROOT` +
+    `&community=AG` +
+    `&longitude=${lng}&latitude=${lat}` +
+    `&start=${formatDateForNASA(start)}&end=${formatDateForNASA(end)}` +
+    `&format=JSON`
+
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`NASA POWER request failed (${res.status})`)
+  const data = await res.json()
+
+  const top = data.properties.parameter.GWETTOP
+  const root = data.properties.parameter.GWETROOT
+
+  // NASA fills missing/unprocessed days with -999 — walk backward to the
+  // most recent day that actually has a value
+  const dates = Object.keys(top).sort().reverse()
+  const latestDate = dates.find(d => top[d] !== -999 && top[d] != null)
+  if (!latestDate) throw new Error('No recent soil moisture data available for this location')
+
+  return {
+    date: latestDate,
+    surfacePct: Math.round(top[latestDate] * 100),   // fraction of saturation → %
+    rootZonePct: Math.round(root[latestDate] * 100),
+    source: 'NASA POWER (GWETTOP/GWETROOT)',
+  }
+}
 
 function getWeatherInfo(code) {
   if (code === 0)  return { icon: '☀️', label: 'Clear Sky' }
@@ -116,6 +248,11 @@ function getWeatherInfo(code) {
   return { icon: '⛈️', label: 'Heavy Storm' }
 }
 
+function formatTime(date) {
+  if (!date) return '—'
+  return date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
 const DAY_LABELS = ['Today', 'Tomorrow', 'Day 3', 'Day 4', 'Day 5']
 
 export default function Irrigation() {
@@ -124,11 +261,42 @@ export default function Irrigation() {
   const [weatherLoading, setWeatherLoading] = useState(false)
   const [weatherError, setWeatherError] = useState('')
   const [currentWeather, setCurrentWeather] = useState(null)
+  const [lastRefreshed, setLastRefreshed] = useState(null)
+  const [satMoisture, setSatMoisture] = useState(null)
+  const [satMoistureLoading, setSatMoistureLoading] = useState(false)
+  const [satMoistureError, setSatMoistureError] = useState('')
+  const intervalRef = useRef(null)
+  const satIntervalRef = useRef(null)
 
-  // Auto-fetch weather for the exact farm coordinates on mount
+  // Auto-fetch weather for the exact farm coordinates on mount,
+  // then keep refreshing every 5 minutes.
   useEffect(() => {
     fetchFarmWeather()
+    intervalRef.current = setInterval(fetchFarmWeather, WEATHER_REFRESH_MS)
+    return () => clearInterval(intervalRef.current)
   }, [])
+
+  // Satellite soil moisture updates far less often than weather (daily
+  // satellite passes with a few days of processing lag), so refresh
+  // every 12 hours rather than every 5 minutes.
+  useEffect(() => {
+    loadSatelliteSoilMoisture()
+    satIntervalRef.current = setInterval(loadSatelliteSoilMoisture, 12 * 60 * 60 * 1000)
+    return () => clearInterval(satIntervalRef.current)
+  }, [])
+
+  async function loadSatelliteSoilMoisture() {
+    setSatMoistureLoading(true)
+    setSatMoistureError('')
+    try {
+      const result = await fetchSatelliteSoilMoisture(FARM_LAT, FARM_LNG)
+      setSatMoisture(result)
+    } catch (err) {
+      setSatMoistureError('Could not fetch satellite soil moisture — using field estimates instead.')
+    } finally {
+      setSatMoistureLoading(false)
+    }
+  }
 
   async function fetchFarmWeather() {
     setWeatherLoading(true)
@@ -164,6 +332,7 @@ export default function Irrigation() {
         precipSum: d.precipitation_sum[i] ?? 0,
       }))
       setForecast(parsed)
+      setLastRefreshed(new Date())
     } catch (err) {
       setWeatherError('Failed to fetch weather data. Check your connection.')
     } finally {
@@ -171,16 +340,18 @@ export default function Irrigation() {
     }
   }
 
-  const liveSchedule = buildLiveSchedule(currentWeather)
+  const liveSchedule = buildLiveSchedule(currentWeather, satMoisture)
 
-  // Derive AI recommendation from live weather
-  const aiRec = currentWeather
-    ? currentWeather.precipitation > 3
-      ? `Live rainfall of ${currentWeather.precipitation}mm detected at farm. Irrigation paused on all blocks — saving ~${(currentWeather.precipitation * 0.4).toFixed(1)} M³/Ha. Resume when rain stops.`
-      : currentWeather.temp > 35
-      ? `Temperature at ${currentWeather.temp}°C — above sugarcane stress threshold (35°C). ET₀ elevated. Water demand increased by ${Math.round((currentWeather.temp - 35) * 3 + 15)}%. Prioritise South Block (moisture 31%).`
-      : `Conditions stable at ${currentWeather.temp}°C, ${currentWeather.humidity}% humidity. ET₀ = ${calcET0(currentWeather.temp, currentWeather.humidity).toFixed(1)} mm/day. Schedule running normally — ${liveSchedule.filter(s => s.status === 'Drought Risk').length} block(s) need attention.`
-    : 'Fetching live weather data for irrigation recommendation...'
+  // Average soil moisture across scheduled blocks (replaces the old sensor-derived figure)
+  const avgMoisture = Math.round(
+    liveSchedule.reduce((sum, s) => sum + s.moisture, 0) / liveSchedule.length
+  )
+
+  // Combined rainfall + ET0 + soil moisture irrigation advisory
+  const advisory = generateIrrigationAdvisory(currentWeather, avgMoisture)
+
+  // Live conditions compared against the sugarcane benchmark
+  const benchmarkData = compareToBenchmark(currentWeather, avgMoisture)
 
   return (
     <div className="irrigation-page fade-in">
@@ -208,9 +379,11 @@ export default function Irrigation() {
           },
           {
             label: 'Current Soil Moisture',
-            val: sensors[0].moisture, unit: '%', icon: '🌱',
-            sub: `Sensor MPS-S01 · North Block`,
-            color: 'var(--teal)', badge: 'LIVE'
+            val: avgMoisture, unit: '%', icon: '🌱',
+            sub: satMoisture
+              ? `NASA POWER satellite · as of ${satMoisture.date.slice(0,4)}-${satMoisture.date.slice(4,6)}-${satMoisture.date.slice(6,8)}`
+              : satMoistureLoading ? 'Fetching satellite reading...' : 'Using field estimates (satellite unavailable)',
+            color: 'var(--teal)', badge: satMoisture ? 'LIVE' : 'AI INSIGHT'
           },
           {
             label: 'Field Temperature',
@@ -237,12 +410,14 @@ export default function Irrigation() {
         ))}
       </div>
 
-      {/* AI Recommendation — live */}
-      <div className="ai-rec-banner">
-        <div className="ai-rec-icon">🤖</div>
+      {/* Irrigation Advisory — combines rainfall + ET0 + soil moisture, live */}
+      <div className={`ai-rec-banner ai-rec-${advisory.level}`}>
+        <div className="ai-rec-icon">
+          {advisory.level === 'urgent' ? '🚨' : advisory.level === 'pause' ? '🌧️' : advisory.level === 'moderate' ? '⚠️' : '🤖'}
+        </div>
         <div className="ai-rec-content">
-          <div className="ai-rec-title">AI Recommendation – {FARM_NAME}</div>
-          <div className="ai-rec-text">{aiRec}</div>
+          <div className="ai-rec-title">Irrigation Advisory – {FARM_NAME}</div>
+          <div className="ai-rec-text">{advisory.text}</div>
         </div>
         <button className="btn-primary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>Apply Adjustment</button>
       </div>
@@ -278,31 +453,16 @@ export default function Irrigation() {
                   </div>
                 </Popup>
               </Polygon>
-              {sensors.map((s, i) => (
-                <CircleMarker key={i} center={[s.lat, s.lng]} radius={10}
-                  pathOptions={{ color: '#fff', weight: 2, fillColor: s.status === 'active' ? '#22c55e' : '#f97316', fillOpacity: 1 }}>
-                  <Popup>
-                    <div style={{ fontFamily: 'Inter', fontSize: 12 }}>
-                      <strong>{s.id}</strong><br />Zone: {s.zone}<br />
-                      Moisture: {s.moisture}% | Temp: {s.temp}°C<br />
-                      Battery: {s.battery}%
-                    </div>
-                  </Popup>
-                </CircleMarker>
-              ))}
             </MapContainer>
-            <div className="irr-map-footer">
-              <div><span className="text-muted text-sm">Active Sensor: </span><span className="text-green">MPS-S01 · North Block · Moisture {sensors[0].moisture}%</span></div>
-            </div>
           </div>
         </div>
 
         {/* Right Panel */}
         <div className="irr-right-col">
           <div className="irr-tabs">
-            {['schedule', 'sensors', 'weather'].map(t => (
+            {['schedule', 'weather', 'benchmark'].map(t => (
               <button key={t} className={`irr-tab ${activeTab === t ? 'active' : ''}`} onClick={() => setActiveTab(t)}>
-                {t === 'schedule' ? '📅 Schedule' : t === 'sensors' ? '📡 Sensors' : '🌦️ Weather'}
+                {t === 'schedule' ? '📅 Schedule' : t === 'weather' ? '🌦️ Weather' : '📊 Benchmark'}
               </button>
             ))}
           </div>
@@ -346,35 +506,18 @@ export default function Irrigation() {
             </div>
           )}
 
-          {/* Sensors Tab */}
-          {activeTab === 'sensors' && (
-            <div className="sensors-list">
-              {sensors.map((s, i) => (
-                <div key={i} className="sensor-card">
-                  <div className="sensor-header">
-                    <div>
-                      <div className="sensor-id">{s.id}</div>
-                      <div className="sensor-zone">{s.zone}</div>
-                    </div>
-                    <div className={`badge ${s.status === 'active' ? 'badge-green' : 'badge-orange'}`}>{s.status}</div>
-                  </div>
-                  <div className="sensor-metrics">
-                    <div className="s-metric"><Droplets size={12} style={{ color: 'var(--blue)' }} /><strong>{s.moisture}%</strong><span>Moisture</span></div>
-                    <div className="s-metric"><Thermometer size={12} style={{ color: 'var(--orange)' }} /><strong>{s.temp}°C</strong><span>Temp</span></div>
-                    <div className="s-metric"><Activity size={12} style={{ color: 'var(--green-accent)' }} /><strong>{s.battery}%</strong><span>Battery</span></div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Weather Tab — auto-loaded for farm coordinates */}
+          {/* Weather Tab — auto-loaded for farm coordinates, refreshes every 5 min */}
           {activeTab === 'weather' && (
             <div className="weather-forecast">
               {/* Farm location label */}
-              <div className="weather-location-label" style={{ marginBottom: 12 }}>
+              <div className="weather-location-label" style={{ marginBottom: 4 }}>
                 <MapPin size={11} /> Live 5-day forecast for <strong>{FARM_NAME}</strong>
                 <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--green-accent)' }}>● {FARM_LAT.toFixed(4)}, {FARM_LNG.toFixed(4)}</span>
+              </div>
+
+              {/* Last refreshed */}
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 12 }}>
+                Last refreshed: {formatTime(lastRefreshed)} · Auto-refreshes every 5 min
               </div>
 
               {/* Current conditions */}
@@ -393,6 +536,29 @@ export default function Irrigation() {
                   ))}
                 </div>
               )}
+
+              {/* Satellite soil moisture detail */}
+              {satMoisture && (
+                <div style={{ background: 'var(--bg-card2)', borderRadius: 8, padding: '10px 12px', border: '1px solid var(--border)', marginBottom: 12 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>
+                    Satellite Soil Moisture — {satMoisture.source}
+                  </div>
+                  <div style={{ display: 'flex', gap: 16 }}>
+                    <div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--teal)' }}>{satMoisture.surfacePct}%</div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Surface wetness</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--blue)' }}>{satMoisture.rootZonePct}%</div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Root-zone wetness</div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.4, fontStyle: 'italic' }}>
+                    Satellite-estimated at ~50km resolution — reflects regional conditions around the farm, not a per-plot sensor reading.
+                  </div>
+                </div>
+              )}
+              {satMoistureError && <div className="weather-error">⚠️ {satMoistureError}</div>}
 
               {/* Error */}
               {weatherError && <div className="weather-error">⚠️ {weatherError}</div>}
@@ -430,6 +596,43 @@ export default function Irrigation() {
                 <button className="btn-ghost" style={{ width: '100%', marginTop: 8, fontSize: 11 }} onClick={fetchFarmWeather}>
                   🔄 Refresh Weather
                 </button>
+              )}
+            </div>
+          )}
+
+          {/* Benchmark Tab — live conditions vs ideal sugarcane ranges */}
+          {activeTab === 'benchmark' && (
+            <div className="irr-benchmark">
+              {benchmarkData ? (
+                <>
+                  <div className="benchmark-score-banner">
+                    <div className="benchmark-score-val">{benchmarkData.overallScore}%</div>
+                    <div className="benchmark-score-label">Aligned with Co-86032 Sugarcane Benchmark</div>
+                  </div>
+                  {benchmarkData.checks.map((c, i) => (
+                    <div key={i} className="benchmark-row">
+                      <div className="benchmark-row-top">
+                        <span>{c.label}</span>
+                        <span className={`badge ${c.status === 'optimal' ? 'badge-green' : c.status === 'low' ? 'badge-blue' : 'badge-orange'}`}>
+                          {c.status === 'optimal' ? '✓ Optimal' : c.status === 'low' ? '↓ Low' : '↑ High'}
+                        </span>
+                      </div>
+                      <div className="benchmark-row-val">{c.value}{c.unit}</div>
+                      <div className="benchmark-row-msg">{c.message}</div>
+                      <div className="progress-bar" style={{ marginTop: 6 }}>
+                        <div
+                          className="progress-fill"
+                          style={{
+                            width: `${c.score}%`,
+                            background: c.status === 'optimal' ? 'var(--green-accent)' : c.status === 'low' ? 'var(--blue)' : 'var(--orange)'
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading benchmark comparison...</div>
               )}
             </div>
           )}

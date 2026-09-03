@@ -1,5 +1,8 @@
 flask
 flask-cors
-tensorflow
+tensorflow>=2.21.0
+tf_keras
 numpy
 pillow
+requests
+python-dotenv
