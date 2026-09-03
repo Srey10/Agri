@@ -1,7 +1,7 @@
-import { useState } from 'react'
-import { useParams, Link, Navigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { ArrowLeft, ThumbsUp, Flag, Send, CornerDownRight, Tag } from 'lucide-react'
-import { getPostById, getCategories, addComment, toggleLike, reportItem } from '../data/forumStore'
+import { getPostById, getCategories, addComment, toggleLike, reportItem } from '../data/api'
 import './Forum.css'
 
 function formatDate(iso) {
@@ -10,43 +10,49 @@ function formatDate(iso) {
 
 export default function ForumPost({ user }) {
   const { id } = useParams()
-  const [refreshKey, setRefreshKey] = useState(0)
-  const post = getPostById(id)
-  const categories = getCategories()
+  const navigate = useNavigate()
+  const [post, setPost] = useState(null)
+  const [categories, setCategories] = useState([])
+  const [notFound, setNotFound] = useState(false)
   const [commentText, setCommentText] = useState('')
   const [replyTo, setReplyTo] = useState(null)
   const [reportBanner, setReportBanner] = useState('')
 
-  if (!post) return <Navigate to="/forum" replace />
+  const load = () => {
+    getPostById(id).then(setPost).catch(() => setNotFound(true))
+  }
+
+  useEffect(load, [id])
+  useEffect(() => { getCategories().then(setCategories).catch(() => {}) }, [])
+
+  if (notFound) { navigate('/forum'); return null }
+  if (!post) return <div className="forum-page">Loading discussion...</div>
 
   const categoryName = categories.find(c => c.id === post.categoryId)?.name || post.categoryId
-  const liked = post.likes.includes(user?.name)
 
   const handleLike = () => {
-    toggleLike(post.id, user?.name || 'Anonymous Farmer')
-    setRefreshKey(k => k + 1)
+    toggleLike(post.id).then(load).catch(() => {})
   }
 
   const handleComment = (e) => {
     e.preventDefault()
     if (!commentText.trim()) return
-    addComment(post.id, { content: commentText, authorName: user?.name || 'Anonymous Farmer', parentId: replyTo })
-    setCommentText('')
-    setReplyTo(null)
-    setRefreshKey(k => k + 1)
+    addComment(post.id, { content: commentText, parentId: replyTo })
+      .then(() => { setCommentText(''); setReplyTo(null); load() })
+      .catch(() => {})
   }
 
   const handleReport = (type, targetId) => {
-    reportItem(post.id, { type, targetId, reason: 'Flagged by user', reportedBy: user?.name || 'Anonymous Farmer' })
-    setReportBanner('Thanks — this has been reported to moderators.')
-    setTimeout(() => setReportBanner(''), 3000)
+    reportItem(post.id, { type, targetId, reason: 'Flagged by user' })
+      .then(() => { setReportBanner('Thanks — this has been reported to moderators.'); setTimeout(() => setReportBanner(''), 3000) })
+      .catch(() => setReportBanner('Please log in to report content.'))
   }
 
   const topLevelComments = post.comments.filter(c => !c.parentId)
   const repliesTo = (commentId) => post.comments.filter(c => c.parentId === commentId)
 
   return (
-    <div className="forum-page" key={refreshKey}>
+    <div className="forum-page">
       <Link to="/forum" className="back-link"><ArrowLeft size={16} /> Back to Forum</Link>
 
       {reportBanner && <div className="report-banner">{reportBanner}</div>}
@@ -64,8 +70,8 @@ export default function ForumPost({ user }) {
         </div>
 
         <div className="post-actions">
-          <button className={`action-btn ${liked ? 'liked' : ''}`} onClick={handleLike}>
-            <ThumbsUp size={16} /> {liked ? 'Liked' : 'Like'} ({post.likes.length})
+          <button className="action-btn" onClick={handleLike}>
+            <ThumbsUp size={16} /> Like ({post.likes.length})
           </button>
           <button className="action-btn" onClick={() => handleReport('post', post.id)}>
             <Flag size={16} /> Report

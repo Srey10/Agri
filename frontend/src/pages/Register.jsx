@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Eye, EyeOff, Loader2, MapPin, CheckCircle } from 'lucide-react'
+import { registerUser } from '../data/api'
 import './Auth.css'
 
 const indianStates = ['Punjab','Haryana','Uttar Pradesh','Madhya Pradesh','Maharashtra','Rajasthan','Gujarat','Karnataka','Andhra Pradesh','Telangana','Tamil Nadu','West Bengal','Bihar','Jharkhand','Odisha','Chhattisgarh','Kerala','Assam']
@@ -48,13 +49,15 @@ export default function Register({ onLogin }) {
     e.preventDefault()
     if (!form.state || !form.crop) { setError('Select state and crop'); return }
     setLoading(true)
-    await new Promise(r => setTimeout(r, 1500))
-    const users = JSON.parse(localStorage.getItem('agrovista_users') || '[]')
-    const fieldId = `FU-${Math.floor(Math.random() * 90 + 10)}-${String.fromCharCode(65 + Math.floor(Math.random() * 26))} • ${form.state}`
-    const newUser = { ...form, field: fieldId, role: 'Farmer', id: Date.now() }
-    users.push(newUser)
-    localStorage.setItem('agrovista_users', JSON.stringify(users))
-    onLogin(newUser)
+    try {
+      const fieldId = `FU-${Math.floor(Math.random() * 90 + 10)}-${String.fromCharCode(65 + Math.floor(Math.random() * 26))} • ${form.state}`
+      const user = await registerUser({ name: form.name, email: form.email, password: form.password })
+      // Farm details (state/district/crop/land) aren't in the users table yet —
+      // shown locally for now, add columns to `users` later if they need to persist.
+      onLogin({ ...user, ...form, field: fieldId })
+    } catch (err) {
+      setError(err.message || 'Could not create account')
+    }
     setLoading(false)
   }
 

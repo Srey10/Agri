@@ -1,7 +1,7 @@
-import { useState, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Search, Plus, MessageSquare, ThumbsUp, X, Tag } from 'lucide-react'
-import { getCategories, getPosts, createPost } from '../data/forumStore'
+import { getCategories, getPosts, createPost } from '../data/api'
 import './Forum.css'
 
 function timeAgo(iso) {
@@ -15,17 +15,29 @@ function timeAgo(iso) {
 }
 
 export default function Forum({ user }) {
-  const categories = getCategories()
+  const [categories, setCategories] = useState([])
+  const [posts, setPosts] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [errorMsg, setErrorMsg] = useState('')
   const [categoryId, setCategoryId] = useState(null)
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState('latest')
   const [showCreate, setShowCreate] = useState(false)
-  const [refreshKey, setRefreshKey] = useState(0)
 
-  const posts = useMemo(
-    () => getPosts({ categoryId, search, sort }),
-    [categoryId, search, sort, refreshKey]
-  )
+  useEffect(() => {
+    getCategories().then(setCategories).catch(() => {})
+  }, [])
+
+  const loadPosts = () => {
+    setLoading(true)
+    setErrorMsg('')
+    getPosts({ categoryId, search, sort })
+      .then(setPosts)
+      .catch(() => setErrorMsg('Could not reach the forum server. Is forum_api.py running on port 5001?'))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(loadPosts, [categoryId, search, sort])
 
   const categoryName = (id) => categories.find(c => c.id === id)?.name || id
 
@@ -57,6 +69,8 @@ export default function Forum({ user }) {
         </select>
       </div>
 
+      {errorMsg && <div className="forum-empty">{errorMsg}</div>}
+
       <div className="forum-body">
         <aside className="forum-categories">
           <button className={`cat-pill ${!categoryId ? 'active' : ''}`} onClick={() => setCategoryId(null)}>
@@ -75,7 +89,7 @@ export default function Forum({ user }) {
         </aside>
 
         <div className="forum-posts">
-          {posts.length === 0 && (
+          {!errorMsg && !loading && posts.length === 0 && (
             <div className="forum-empty">No discussions found. Be the first to start one.</div>
           )}
           {posts.map(post => (
@@ -91,8 +105,8 @@ export default function Forum({ user }) {
               </div>
               <div className="post-card-bottom">
                 <span className="post-author">by {post.authorName}</span>
-                <span className="post-stat"><ThumbsUp size={14} /> {post.likes.length}</span>
-                <span className="post-stat"><MessageSquare size={14} /> {post.comments.length}</span>
+                <span className="post-stat"><ThumbsUp size={14} /> {post.likeCount}</span>
+                <span className="post-stat"><MessageSquare size={14} /> {post.commentCount}</span>
               </div>
             </Link>
           ))}
@@ -101,42 +115,41 @@ export default function Forum({ user }) {
 
       {showCreate && (
         <CreatePostModal
-          user={user}
           categories={categories}
           onClose={() => setShowCreate(false)}
-          onCreated={() => { setShowCreate(false); setRefreshKey(k => k + 1) }}
+          onCreated={() => { setShowCreate(false); loadPosts() }}
         />
       )}
     </div>
   )
 }
 
-function CreatePostModal({ user, categories, onClose, onCreated }) {
+function CreatePostModal({ categories, onClose, onCreated }) {
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
   const [categoryId, setCategoryId] = useState(categories[0]?.id || '')
   const [tagsInput, setTagsInput] = useState('')
   const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
     if (!title.trim() || !content.trim() || !categoryId) {
       setError('Title, content, and category are required.')
       return
     }
+    setSubmitting(true)
     try {
-      createPost({
-        title,
-        content,
-        categoryId,
+      await createPost({
+        title, content, categoryId,
         tags: tagsInput.split(',').map(t => t.trim()).filter(Boolean),
-        authorName: user?.name || 'Anonymous Farmer',
       })
       onCreated()
     } catch (err) {
       setError(err.message)
     }
+    setSubmitting(false)
   }
 
   return (
@@ -164,7 +177,7 @@ function CreatePostModal({ user, categories, onClose, onCreated }) {
 
           <div className="modal-actions">
             <button type="button" className="btn-outline" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn-primary">Post Discussion</button>
+            <button type="submit" className="btn-primary" disabled={submitting}>{submitting ? 'Posting...' : 'Post Discussion'}</button>
           </div>
         </form>
       </div>
