@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Eye, EyeOff, Leaf, MapPin, Loader2 } from 'lucide-react'
+import { loginUser } from '../data/api'
 import './Auth.css'
 
 export default function Login({ onLogin }) {
@@ -14,18 +15,11 @@ export default function Login({ onLogin }) {
     setError('')
     if (!form.email || !form.password) { setError('Please fill all fields'); return }
     setLoading(true)
-    await new Promise(r => setTimeout(r, 1200))
-    const users = JSON.parse(localStorage.getItem('agrovista_users') || '[]')
-    const found = users.find(u => u.email === form.email && u.password === form.password)
-    if (found) {
-      onLogin(found)
-    } else {
-      // Demo login
-      if (form.email === 'arjun@agrovista.in' && form.password === 'farm@123') {
-        onLogin({ name: 'Arjun Sharma', email: form.email, field: 'MPS-01 • Maharashtra', role: 'Agronomist' })
-      } else {
-        setError('Invalid credentials. Try arjun@agrovista.in / farm@123')
-      }
+    try {
+      const user = await loginUser({ email: form.email, password: form.password })
+      onLogin(user)
+    } catch (err) {
+      setError(err.message || 'Invalid credentials. Try arjun@agrovista.in / farm@123')
     }
     setLoading(false)
   }
