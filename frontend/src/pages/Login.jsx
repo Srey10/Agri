@@ -44,7 +44,7 @@ export default function Login({ onLogin }) {
         <div className="auth-left">
           <div className="auth-logo">
             <div className="auth-logo-icon">🌾</div>
-            <span>AgroVista<strong>GIS</strong></span>
+            <span>AgriSense<strong>GIS</strong></span>
           </div>
           <h1 className="auth-hero-title">India's Digital Agronomy Platform</h1>
           <p className="auth-hero-sub">Smart farming solutions for Indian farmers across Punjab, Maharashtra, Uttar Pradesh, Rajasthan & beyond.</p>
@@ -65,7 +65,7 @@ export default function Login({ onLogin }) {
           <div className="auth-card">
             <div className="auth-form-header">
               <h2>Welcome Back 🙏</h2>
-              <p>Sign in to your AgroVista account</p>
+              <p>Sign in to your AgriSense account</p>
             </div>
 
             {error && <div className="auth-error">{error}</div>}
@@ -103,7 +103,7 @@ export default function Login({ onLogin }) {
             </div>
 
             <div className="auth-switch">
-              New to AgroVista? <Link to="/register">Create Account →</Link>
+              New to AgriSense? <Link to="/register">Create Account →</Link>
             </div>
           </div>
         </div>
