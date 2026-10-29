@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import { Thermometer, Droplets, Wind, AlertTriangle, Clock, MapPin } from 'lucide-react'
 import MapView from '../components/MapView'
+import AdvisoryCard from '../components/AdvisoryCard'
 import { FARM_BOUNDARY, buildZones, classifyHealth, healthColor, fetchRainfall } from './GISMapping'
 import './Dashboard.css'
 
@@ -276,6 +277,13 @@ useEffect(() => {
         </div>
       </div>
 
+      <AdvisoryCard
+        zones={dashZones}
+        temp={temp}
+        rainfall={precipitation}
+        ready={!zonesLoading && !weatherLoading}
+      />
+      
       {/* Top Stats — partially live */}
       <div className="stats-row">
         {[
