@@ -61,3 +61,13 @@
 @media (max-width: 900px) {
   .cd-main { grid-template-columns: 1fr; }
 }
+
+@media (max-width: 640px) {
+  .cd-header {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .cd-dropzone {
+    padding: 24px 14px;
+  }
+}
