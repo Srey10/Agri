@@ -195,7 +195,7 @@ function generateIrrigationAdvisory(weather, avgMoisture) {
 // Uses GWETTOP (surface wetness) and GWETROOT (root-zone wetness), both
 // expressed as a 0-1 fraction of saturation. No API key, no HDF5 parsing —
 // plain JSON over HTTPS, same pattern as the Open-Meteo weather call below.
-// Data has ~2-3 day satellite processing latency, so we request a 7-day
+// Data has ~8-12 day satellite processing latency, so we request a 30-day
 // window and use the most recent day that has a valid reading.
 function formatDateForNASA(d) {
   return d.toISOString().slice(0, 10).replace(/-/g, '')
@@ -204,7 +204,7 @@ function formatDateForNASA(d) {
 async function fetchSatelliteSoilMoisture(lat, lng) {
   const end = new Date()
   const start = new Date()
-  start.setDate(start.getDate() - 7)
+  start.setDate(start.getDate() - 30)
 
   const url =
     `https://power.larc.nasa.gov/api/temporal/daily/point` +
@@ -232,6 +232,23 @@ async function fetchSatelliteSoilMoisture(lat, lng) {
     surfacePct: Math.round(top[latestDate] * 100),   // fraction of saturation → %
     rootZonePct: Math.round(root[latestDate] * 100),
     source: 'NASA POWER (GWETTOP/GWETROOT)',
+  }
+}
+
+async function fetchOpenMeteoSoilMoisture(lat, lng) {
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=soil_moisture_0_to_1cm,soil_moisture_1_to_3cm,soil_moisture_3_to_9cm,soil_moisture_9_to_27cm&timezone=Asia%2FKolkata`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`Open-Meteo soil request failed (${res.status})`)
+  const data = await res.json()
+  const c = data.current
+  const surface = ((c.soil_moisture_0_to_1cm + c.soil_moisture_1_to_3cm) / 2)
+  const root = ((c.soil_moisture_3_to_9cm + c.soil_moisture_9_to_27cm) / 2)
+  const todayStr = (c.time || new Date().toISOString()).slice(0, 10).replace(/-/g, '')
+  return {
+    date: todayStr,
+    surfacePct: Math.round(surface * 100),
+    rootZonePct: Math.round(root * 100),
+    source: 'Open-Meteo Soil Model',
   }
 }
 
@@ -292,7 +309,12 @@ export default function Irrigation() {
       const result = await fetchSatelliteSoilMoisture(FARM_LAT, FARM_LNG)
       setSatMoisture(result)
     } catch (err) {
-      setSatMoistureError('Could not fetch satellite soil moisture — using field estimates instead.')
+      try {
+        const fallback = await fetchOpenMeteoSoilMoisture(FARM_LAT, FARM_LNG)
+        setSatMoisture(fallback)
+      } catch (fallbackErr) {
+        setSatMoistureError('Could not fetch soil moisture — using field estimates instead.')
+      }
     } finally {
       setSatMoistureLoading(false)
     }
@@ -381,8 +403,8 @@ export default function Irrigation() {
             label: 'Current Soil Moisture',
             val: avgMoisture, unit: '%', icon: '🌱',
             sub: satMoisture
-              ? `NASA POWER satellite · as of ${satMoisture.date.slice(0,4)}-${satMoisture.date.slice(4,6)}-${satMoisture.date.slice(6,8)}`
-              : satMoistureLoading ? 'Fetching satellite reading...' : 'Using field estimates (satellite unavailable)',
+              ? `${satMoisture.source} · as of ${satMoisture.date.slice(0,4)}-${satMoisture.date.slice(4,6)}-${satMoisture.date.slice(6,8)}`
+              : satMoistureLoading ? 'Fetching soil moisture reading...' : 'Using field estimates (satellite unavailable)',
             color: 'var(--teal)', badge: satMoisture ? 'LIVE' : 'AI INSIGHT'
           },
           {
