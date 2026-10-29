@@ -2,15 +2,15 @@
 import { useState, useEffect, useRef } from 'react'
 import { MapContainer, TileLayer, Polygon, Popup } from 'react-leaflet'
 import { Droplets, Thermometer, Calendar, Plus, Download, MapPin } from 'lucide-react'
+import { getFarmInfo } from '../data/farm'
 import './Irrigation.css'
 
-// Mote Patil Sugarcane Farms — exact coordinates
+// Sample farm coordinates for weather + map (not yet per-farmer)
 const FARM_LAT = 19.4308
 const FARM_LNG = 74.9010
-const FARM_NAME = 'Mote Patil Sugarcane Farms, Maharashtra'
 
 // Farm boundary polygon for map (same as GISMapping)
-// Mote Patil Sugarcane Farms — exact traced boundary
+// Sample traced boundary (not yet per-farmer)
 const farmPolygon = [
   [19.431147, 74.900480],
   [19.431153, 74.901019],
@@ -255,7 +255,9 @@ function formatTime(date) {
 
 const DAY_LABELS = ['Today', 'Tomorrow', 'Day 3', 'Day 4', 'Day 5']
 
-export default function Irrigation() {
+export default function Irrigation({ user }) {
+  const farm = getFarmInfo(user)
+  const FARM_NAME = [farm.farmName, farm.location].filter(Boolean).join(', ')
   const [activeTab, setActiveTab] = useState('schedule')
   const [forecast, setForecast] = useState(null)
   const [weatherLoading, setWeatherLoading] = useState(false)
@@ -428,7 +430,7 @@ export default function Irrigation() {
         <div className="irr-map-col">
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div className="irr-map-header">
-              <div className="irr-map-title">Mote Patil Farm – Irrigation Zones Live View</div>
+              <div className="irr-map-title">{farm.farmName} – Irrigation Zones Live View</div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <div className="irr-legend-item" style={{ color: 'var(--green-accent)' }}>🟢 Active</div>
                 <div className="irr-legend-item" style={{ color: 'var(--blue)' }}>🔵 Scheduled</div>
@@ -447,7 +449,7 @@ export default function Irrigation() {
               >
                 <Popup>
                   <div style={{ fontFamily: 'Inter', fontSize: 12 }}>
-                    <strong>Mote Patil Sugarcane Farms</strong><br />
+                    <strong>{farm.farmName}</strong><br />
                     Total Area: ~8-10 Ha<br />
                     Crop: Sugarcane (Co-86032)
                   </div>

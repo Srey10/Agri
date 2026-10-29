@@ -9,13 +9,14 @@ const crops = ['Wheat (गेहूं)','Rice / Paddy (धान)','Basmati (�
 
 export default function Register({ onLogin }) {
   const [step, setStep] = useState(1)
-  const [form, setForm] = useState({ name: '', email: '', phone: '', password: '', state: '', district: '', crop: '', landAcres: '', field: '' })
+  const [form, setForm] = useState({ name: '', email: '', phone: '', password: '', farmName: '', state: '', district: '', crop: '', landAcres: '' })
   const [showPass, setShowPass] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [locating, setLocating] = useState(false)
 
   const detectLocation = () => {
+    setError('')
     setLocating(true)
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
@@ -27,20 +28,23 @@ export default function Register({ onLogin }) {
             const district = data.address?.county || data.address?.city || ''
             setForm(f => ({ ...f, state, district }))
           } catch {
-            setForm(f => ({ ...f, state: 'Punjab', district: 'Amritsar' }))
+            setError('Could not look up your location. Please select your state and district manually.')
           }
           setLocating(false)
         },
-        () => { setForm(f => ({ ...f, state: 'Punjab', district: 'Ludhiana' })); setLocating(false) }
+        () => { setError('Location access was denied or unavailable. Please select your state and district manually.'); setLocating(false) }
       )
     } else {
-      setForm(f => ({ ...f, state: 'Punjab', district: 'Ludhiana' })); setLocating(false)
+      setError('Location detection is not supported in this browser. Please select your state and district manually.')
+      setLocating(false)
     }
   }
 
   const handleNext = (e) => {
     e.preventDefault()
-    if (step === 1 && (!form.name || !form.email || !form.password)) { setError('Fill all fields'); return }
+    if (!form.name.trim() || !form.email.trim() || !form.password) { setError('Name, email and password are required'); return }
+    if (form.password.length < 6) { setError('Password must be at least 6 characters'); return }
+    if (form.phone.trim() && !/^\+?[0-9][0-9 -]{6,18}$/.test(form.phone.trim())) { setError('Enter a valid mobile number'); return }
     setError('')
     setStep(2)
   }
@@ -48,17 +52,21 @@ export default function Register({ onLogin }) {
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!form.state || !form.crop) { setError('Select state and crop'); return }
+    if (form.landAcres && Number(form.landAcres) <= 0) { setError('Land size must be greater than 0'); return }
+    setError('')
     setLoading(true)
     try {
-      const fieldId = `FU-${Math.floor(Math.random() * 90 + 10)}-${String.fromCharCode(65 + Math.floor(Math.random() * 26))} • ${form.state}`
-      const user = await registerUser({ name: form.name, email: form.email, password: form.password })
-      // Farm details (state/district/crop/land) aren't in the users table yet —
-      // shown locally for now, add columns to `users` later if they need to persist.
-      onLogin({ ...user, ...form, field: fieldId })
+      // Account + farm profile are saved by the backend; the returned user includes the profile.
+      const user = await registerUser({
+        name: form.name.trim(), email: form.email.trim(), password: form.password,
+        phone: form.phone.trim(), farmName: form.farmName.trim(), state: form.state,
+        district: form.district.trim(), primaryCrop: form.crop, landAcres: form.landAcres,
+      })
+      onLogin(user)
     } catch (err) {
-      setError(err.message || 'Could not create account')
+      setError(err.message || 'Could not create account. Is the server running?')
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   return (
@@ -129,6 +137,10 @@ export default function Register({ onLogin }) {
                 <button type="button" className="locate-btn" onClick={detectLocation} disabled={locating}>
                   {locating ? <><Loader2 size={14} className="spin-icon" /> Detecting...</> : <><MapPin size={14} /> 📍 Detect My Location</>}
                 </button>
+                <div className="form-group">
+                  <label>Farm Name (खेत का नाम)</label>
+                  <input className="input" placeholder="e.g. Green Valley Farm" maxLength={120} value={form.farmName} onChange={e => setForm({ ...form, farmName: e.target.value })} />
+                </div>
                 <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   <div className="form-group">
                     <label>State (राज्य)</label>
@@ -151,7 +163,7 @@ export default function Register({ onLogin }) {
                 </div>
                 <div className="form-group">
                   <label>Land Size (भूमि का आकार) - Acres</label>
-                  <input className="input" type="number" placeholder="e.g. 5.5 acres" value={form.landAcres} onChange={e => setForm({ ...form, landAcres: e.target.value })} />
+                  <input className="input" type="number" min="0" step="any" placeholder="e.g. 5.5 acres" value={form.landAcres} onChange={e => setForm({ ...form, landAcres: e.target.value })} />
                 </div>
                 <button className="btn-primary auth-submit" type="submit" disabled={loading}>
                   {loading ? <><Loader2 size={16} className="spin-icon" /> Creating account...</> : '✅ Create My Farm Account'}

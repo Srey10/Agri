@@ -29,8 +29,8 @@ async function request(path, { method = 'GET', body, auth = false } = {}) {
 }
 
 // ---- Auth --------------------------------------------------------------
-export async function registerUser({ name, email, password }) {
-  const data = await request('/auth/register', { method: 'POST', body: { name, email, password } })
+export async function registerUser({ name, email, password, ...profile }) {
+  const data = await request('/auth/register', { method: 'POST', body: { name, email, password, ...profile } })
   setToken(data.token)
   return data.user
 }
@@ -49,6 +49,10 @@ export async function fetchCurrentUser() {
     clearToken()
     return null
   }
+}
+
+export function fetchFarmerProfile() {
+  return request('/farmer/profile', { auth: true })
 }
 
 // ---- Forum ---------------------------------------------------------------

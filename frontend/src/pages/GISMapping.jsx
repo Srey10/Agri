@@ -3,15 +3,16 @@ import { useState, useEffect } from 'react'
 import * as turf from '@turf/turf'
 import MapView from '../components/MapView'
 import { Layers, Activity, Droplets, Leaf } from 'lucide-react'
+import { getFarmInfo } from '../data/farm'
 import './GISMapping.css'
 
-// Farm boundary: Mote Patil Sugarcane Farms, Maharashtra
+// Sample farm boundary (not yet per-farmer), Maharashtra
 // Traced from satellite imagery at 19.430895, 74.900874
 // The farm has a diagonal NW road boundary and is ~8-10 hectares
 export const FARM_BOUNDARY = {
   type: 'Feature',
   properties: {
-    name: 'Mote Patil Sugarcane Farms'
+    name: 'Sample field boundary'
   },
   geometry: {
     type: 'Polygon',
@@ -121,7 +122,8 @@ export async function fetchRainfall(zones) {
   return results
 }
 
-export default function GISMapping() {
+export default function GISMapping({ user }) {
+  const farm = getFarmInfo(user)
   const [zones, setZones] = useState([])
   const [loading, setLoading] = useState(true)
   const [selectedZone, setSelectedZone] = useState(null)
@@ -225,8 +227,8 @@ export default function GISMapping() {
       {/* Header */}
       <div className="gis-header">
         <div>
-          <h1 className="dash-title">🗺️ GIS Mapping – Mote Patil Sugarcane Farms</h1>
-          <p className="dash-sub">Mote Patil Farm House Rd, Maharashtra · 4×4 zone grid</p>
+          <h1 className="dash-title">🗺️ GIS Mapping – {farm.farmName}</h1>
+          <p className="dash-sub">{farm.location ? `${farm.location} · ` : ''}4×4 zone grid</p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <div className="badge badge-green pulse"><span className="dot dot-green"></span> Live Data</div>
@@ -335,7 +337,7 @@ export default function GISMapping() {
                 <div className="zone-detail-header">
                   <div>
                     <div className="zone-detail-id">Zone {selectedZone.id + 1}</div>
-                    <div className="zone-detail-sub">Sugarcane · Mote Patil Farms, Maharashtra</div>
+                    <div className="zone-detail-sub">Sugarcane · {farm.farmName}{farm.location ? `, ${farm.location}` : ''}</div>
                   </div>
                   <div className={`badge ${selectedZone.health === 'Healthy' ? 'badge-green' : selectedZone.health === 'Moderate' ? 'badge-yellow' : 'badge-red'}`}>
                     {selectedZone.health}
