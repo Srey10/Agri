@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { MapContainer, TileLayer, Polygon, Popup } from 'react-leaflet'
 import { Droplets, Thermometer, Calendar, Plus, Download, MapPin } from 'lucide-react'
+import { FARM_BOUNDARY, buildZones } from './GISMapping'
 import './Irrigation.css'
 
 // Mote Patil Sugarcane Farms — exact coordinates
@@ -9,8 +10,7 @@ const FARM_LAT = 19.4308
 const FARM_LNG = 74.9010
 const FARM_NAME = 'Mote Patil Sugarcane Farms, Maharashtra'
 
-// Farm boundary polygon for map (same as GISMapping)
-// Mote Patil Sugarcane Farms — exact traced boundary
+// Farm boundary polygon for map
 const farmPolygon = [
   [19.431147, 74.900480],
   [19.431153, 74.901019],
@@ -28,17 +28,37 @@ const farmPolygon = [
   [19.431147, 74.900480],
 ]
 
+// Real zones generated dynamically from farm geometry
+const FARM_ZONES = buildZones(FARM_BOUNDARY)
+
+// Helper to convert GeoJSON polygon coordinates [lng, lat] to Leaflet [lat, lng]
+function geoJsonToLeaflet(feature) {
+  if (!feature?.geometry?.coordinates) return []
+  const coords = feature.geometry.coordinates[0]
+  return coords.map(([lng, lat]) => [lat, lng])
+}
+
 // How often the weather API is refreshed automatically (5 minutes)
 const WEATHER_REFRESH_MS = 5 * 60 * 1000
 
-// Base schedule — times and base water demand per block
-// Status, actual water demand, and notes are computed from live weather
-const BASE_SCHEDULE = [
-  { zone: 'North Block – Zone 1-4',  crop: 'ऊस (Sugarcane)', startHour: 5,  endHour: 7,  baseWater: 5.8, baseMoisture: 72 },
-  { zone: 'Central Block – Zone 5-8', crop: 'ऊस (Sugarcane)', startHour: 14, endHour: 16, baseWater: 5.5, baseMoisture: 55 },
-  { zone: 'South Block – Zone 9-12', crop: 'ऊस (Sugarcane)', startHour: 18, endHour: 20, baseWater: 6.2, baseMoisture: 31 },
-  { zone: 'East Block – Zone 13-16', crop: 'ऊस (Sugarcane)', startHour: 6,  endHour: 7,  baseWater: 4.8, baseMoisture: 68 },
+// Staggered irrigation schedule windows for farm zones
+const ZONE_SCHEDULE_CONFIG = [
+  { startHour: 5,  startMin: 0,  endHour: 6,  endMin: 30, blockName: 'North Block' },
+  { startHour: 6,  startMin: 30, endHour: 8,  endMin: 0,  blockName: 'North-East Block' },
+  { startHour: 8,  startMin: 0,  endHour: 9,  endMin: 30, blockName: 'Central Block' },
+  { startHour: 15, startMin: 0,  endHour: 16, endMin: 30, blockName: 'Central-West Block' },
+  { startHour: 16, startMin: 30, endHour: 18, endMin: 0,  blockName: 'South Block' },
+  { startHour: 18, startMin: 0,  endHour: 19, endMin: 30, blockName: 'South-East Block' },
+  { startHour: 19, startMin: 30, endHour: 21, endMin: 0,  blockName: 'East Block' },
+  { startHour: 21, startMin: 0,  endHour: 22, endMin: 30, blockName: 'West Block' },
 ]
+
+// Soil physical profiles: water demand and moisture retention per soil type
+const SOIL_PROFILES = {
+  Clay:  { baseWater: 4.6, moistureOffset: 6,  drainage: 'High water retention' },
+  Loam:  { baseWater: 5.4, moistureOffset: 0,  drainage: 'Balanced moisture buffer' },
+  Sandy: { baseWater: 6.2, moistureOffset: -8, drainage: 'Fast drainage, high porosity' },
+}
 
 // Ideal/benchmark values for Co-86032 sugarcane (general growth-stage averages)
 const SUGARCANE_BENCHMARK = {
@@ -51,76 +71,85 @@ const SUGARCANE_BENCHMARK = {
 // Simplified Penman-Monteith ET₀ estimate for sugarcane
 // Uses temperature and humidity from live weather
 function calcET0(tempC, humidity) {
-  // Hargreaves simplified: ET₀ ≈ 0.0023 × (T + 17.8) × (Tmax - Tmin)^0.5 × Ra
-  // We approximate with a simpler formula using temp and humidity
   const vpd = (1 - humidity / 100) * 0.6108 * Math.exp(17.27 * tempC / (tempC + 237.3))
   const et0 = 0.408 * vpd * (tempC / 10) + 0.5
   return Math.max(0.5, Math.min(et0, 8))
 }
 
-// Derive live schedule from weather conditions + real satellite soil moisture.
-// satMoisture (from NASA POWER) becomes the true baseline; each block keeps
-// its original relative offset so zones still show realistic variation
-// instead of one identical number everywhere.
-function buildLiveSchedule(weather, satMoisture) {
-  const avgStaticBase = BASE_SCHEDULE.reduce((s, b) => s + b.baseMoisture, 0) / BASE_SCHEDULE.length
-
-  if (!weather) return BASE_SCHEDULE.map(b => ({
-    ...b,
-    time: `${String(b.startHour).padStart(2,'0')}:00 – ${String(b.endHour).padStart(2,'0')}:00`,
-    water: `${b.baseWater} M³/Ha`,
-    moisture: b.baseMoisture,
-    status: 'Loading...',
-    note: '',
-  }))
-
+// Derive live schedule dynamically from real current farm zones, live weather, and soil moisture
+function buildLiveSchedule(weather, satMoisture, zones = FARM_ZONES) {
   const now = new Date()
   const currentHour = now.getHours()
-  const rain = weather.precipitation
-  const temp = weather.temp
-  const humidity = weather.humidity
+  const currentMin = now.getMinutes()
+  const nowDecimal = currentHour + currentMin / 60
+
+  const rain = weather?.precipitation ?? 0
+  const temp = weather?.temp ?? 30
+  const humidity = weather?.humidity ?? 65
   const et0 = calcET0(temp, humidity)
 
-  return BASE_SCHEDULE.map(b => {
-    // Anchor this block's moisture to the real satellite reading, keeping
-    // its original offset from the fleet average for per-zone variation
-    const offset = b.baseMoisture - avgStaticBase
-    const liveMoisture = satMoisture
-      ? Math.max(5, Math.min(95, Math.round(satMoisture.surfacePct + offset)))
-      : b.baseMoisture
+  // Satellite or live model moisture baseline
+  const baseSat = satMoisture ? satMoisture.surfacePct : 58
 
-    // Adjust water demand based on ET₀ and rainfall
-    const rainReduction = rain > 5 ? 0.5 : rain > 2 ? 0.75 : rain > 0.5 ? 0.9 : 1.0
+  return zones.map((z, idx) => {
+    const slot = ZONE_SCHEDULE_CONFIG[idx % ZONE_SCHEDULE_CONFIG.length]
+    const profile = SOIL_PROFILES[z.soil] || SOIL_PROFILES.Loam
+    const startDecimal = slot.startHour + slot.startMin / 60
+    const endDecimal = slot.endHour + slot.endMin / 60
+
+    // Zone soil moisture tailored to its soil type and vegetative vigor (NDVI)
+    const ndviOffset = Math.round(((z.ndvi || 0.5) - 0.5) * 12)
+    const liveMoisture = Math.max(10, Math.min(95, Math.round(baseSat + profile.moistureOffset + ndviOffset)))
+
+    // Water demand adjusted for ET₀ and active rainfall
+    const rainReduction = rain > 5 ? 0.3 : rain > 2 ? 0.65 : rain > 0.5 ? 0.85 : 1.0
     const tempFactor = temp > 38 ? 1.25 : temp > 35 ? 1.15 : temp > 32 ? 1.05 : 1.0
-    const adjustedWater = (b.baseWater * rainReduction * tempFactor).toFixed(1)
+    const adjustedWater = (profile.baseWater * rainReduction * tempFactor).toFixed(1)
 
-    // Determine status from time of day and conditions
-    let status, note
+    const time = `${String(slot.startHour).padStart(2, '0')}:${String(slot.startMin).padStart(2, '0')} – ${String(slot.endHour).padStart(2, '0')}:${String(slot.endMin).padStart(2, '0')}`
+
+    let status, color, note
     if (rain > 5) {
       status = 'Paused – Rain'
-      note = `Active rainfall ${rain}mm — irrigation paused automatically`
+      color = '#a855f7'
+      note = `Heavy rain (${rain}mm) active — irrigation paused to conserve water and prevent waterlogging.`
     } else if (liveMoisture < 35 && rain < 1) {
       status = 'Drought Risk'
-      note = `Moisture critically low (satellite-estimated). ET₀ = ${et0.toFixed(1)} mm/day. Urgent irrigation needed.`
-    } else if (currentHour >= b.endHour) {
+      color = '#f97316'
+      note = `${z.soil} soil critically dry (${liveMoisture}%). ET₀ = ${et0.toFixed(1)} mm/day. Immediate hydration required.`
+    } else if (nowDecimal >= endDecimal) {
       status = 'Complete'
-      note = rain > 0.5 ? `Completed. ${rain}mm rain supplemented — water saved.` : `Completed on schedule.`
-    } else if (currentHour >= b.startHour) {
+      color = '#22c55e'
+      note = rain > 0.5
+        ? `Completed with ${rain}mm rain contribution. Water quota conserved.`
+        : `Completed on schedule. Target root hydration achieved.`
+    } else if (nowDecimal >= startDecimal) {
       status = 'In Progress'
-      note = `Currently irrigating. ET₀ = ${et0.toFixed(1)} mm/day.`
+      color = '#06b6d4'
+      note = `Active drip cycle running. Flow calibrated for ${z.soil} soil percolation.`
     } else {
       status = 'Scheduled'
+      color = '#3b82f6'
       note = temp > 35
-        ? `High temp (${temp}°C) — demand increased by ${Math.round((tempFactor - 1) * 100)}%`
-        : `On schedule. Demand adjusted for ET₀ ${et0.toFixed(1)} mm/day.`
+        ? `High temp (${temp}°C) — demand increased by ${Math.round((tempFactor - 1) * 100)}% for ${slot.blockName}.`
+        : `On schedule. Calibrated for ${z.soil} soil (${profile.drainage}).`
     }
 
     return {
-      ...b,
-      time: `${String(b.startHour).padStart(2,'0')}:00 – ${String(b.endHour).padStart(2,'0')}:00`,
+      id: z.id,
+      zoneNumber: z.id + 1,
+      zoneName: `Zone ${z.id + 1} (${slot.blockName})`,
+      crop: 'ऊस (Sugarcane Co-86032)',
+      soil: z.soil,
+      areaHa: z.areaHa,
+      ndvi: z.ndvi,
+      geometry: z.geometry,
+      centroid: z.centroid,
+      time,
       water: `${adjustedWater} M³/Ha`,
       moisture: liveMoisture,
       status,
+      color,
       note,
     }
   })
@@ -282,6 +311,7 @@ export default function Irrigation() {
   const [satMoisture, setSatMoisture] = useState(null)
   const [satMoistureLoading, setSatMoistureLoading] = useState(false)
   const [satMoistureError, setSatMoistureError] = useState('')
+  const [selectedZoneId, setSelectedZoneId] = useState(null)
   const intervalRef = useRef(null)
   const satIntervalRef = useRef(null)
 
@@ -447,14 +477,16 @@ export default function Irrigation() {
       {/* Main Content */}
       <div className="irr-main">
         {/* Map — centered on actual farm */}
+        {/* Map — centered on actual farm */}
         <div className="irr-map-col">
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div className="irr-map-header">
-              <div className="irr-map-title">Mote Patil Farm – Irrigation Zones Live View</div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <div className="irr-legend-item" style={{ color: 'var(--green-accent)' }}>🟢 Active</div>
-                <div className="irr-legend-item" style={{ color: 'var(--blue)' }}>🔵 Scheduled</div>
-                <div className="irr-legend-item" style={{ color: 'var(--orange)' }}>🟠 Drought Risk</div>
+              <div className="irr-map-title">Mote Patil Farm – {liveSchedule.length} Zones Live Irrigation View</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <div className="irr-legend-item" style={{ color: '#22c55e' }}>🟢 Complete</div>
+                <div className="irr-legend-item" style={{ color: '#06b6d4' }}>💠 In Progress</div>
+                <div className="irr-legend-item" style={{ color: '#3b82f6' }}>🔵 Scheduled</div>
+                <div className="irr-legend-item" style={{ color: '#f97316' }}>🟠 Drought Risk</div>
               </div>
             </div>
             <MapContainer center={[FARM_LAT, FARM_LNG]} zoom={15} style={{ height: '340px' }}>
@@ -463,18 +495,51 @@ export default function Irrigation() {
                 attribution="Tiles © Esri"
                 maxZoom={19}
               />
+              {/* Outer boundary outline */}
               <Polygon
                 positions={farmPolygon}
-                pathOptions={{ color: '#22c55e', weight: 2, fillColor: '#22c55e', fillOpacity: 0.15, dashArray: '8,4' }}
-              >
-                <Popup>
-                  <div style={{ fontFamily: 'Inter', fontSize: 12 }}>
-                    <strong>Mote Patil Sugarcane Farms</strong><br />
-                    Total Area: ~8-10 Ha<br />
-                    Crop: Sugarcane (Co-86032)
-                  </div>
-                </Popup>
-              </Polygon>
+                pathOptions={{
+                  color: '#ffffff',
+                  weight: 2,
+                  fillColor: 'transparent',
+                  dashArray: '6,4',
+                }}
+              />
+              {/* Dynamic current zones from GIS */}
+              {liveSchedule.map(s => {
+                const positions = geoJsonToLeaflet(s.geometry)
+                if (!positions.length) return null
+                const isSelected = selectedZoneId === s.id
+                return (
+                  <Polygon
+                    key={s.id}
+                    positions={positions}
+                    pathOptions={{
+                      color: isSelected ? '#ffffff' : s.color,
+                      weight: isSelected ? 3 : 1.5,
+                      fillColor: s.color,
+                      fillOpacity: isSelected ? 0.65 : 0.45,
+                    }}
+                    eventHandlers={{
+                      click: () => setSelectedZoneId(s.id === selectedZoneId ? null : s.id),
+                    }}
+                  >
+                    <Popup>
+                      <div style={{ fontFamily: 'Inter', fontSize: 12, lineHeight: 1.5 }}>
+                        <div style={{ fontWeight: 800, fontSize: 13, color: 'var(--green-accent)', marginBottom: 2 }}>
+                          {s.zoneName}
+                        </div>
+                        <div><strong>Soil Type:</strong> {s.soil} Soil</div>
+                        <div><strong>Zone Area:</strong> {s.areaHa} Ha</div>
+                        <div><strong>Status:</strong> {s.status}</div>
+                        <div><strong>Irrigation Window:</strong> {s.time}</div>
+                        <div><strong>Water Allocation:</strong> {s.water}</div>
+                        <div><strong>Soil Moisture:</strong> {s.moisture}%</div>
+                      </div>
+                    </Popup>
+                  </Polygon>
+                )
+              })}
             </MapContainer>
           </div>
         </div>
@@ -497,34 +562,64 @@ export default function Irrigation() {
                   Loading live weather to compute schedule...
                 </div>
               )}
-              {liveSchedule.map((s, i) => (
-                <div key={i} className="schedule-item">
-                  <div className="schedule-top">
-                    <div className="schedule-zone">{s.zone}</div>
-                    <div className={`badge ${
-                      s.status === 'Complete' ? 'badge-green' :
-                      s.status === 'In Progress' ? 'badge-green' :
-                      s.status === 'Scheduled' ? 'badge-blue' :
-                      s.status === 'Paused – Rain' ? 'badge-blue' :
-                      'badge-orange'
-                    }`}>{s.status}</div>
-                  </div>
-                  <div className="schedule-crop">{s.crop}</div>
-                  <div className="schedule-meta">
-                    <span><Calendar size={11} /> {s.time}</span>
-                    <span><Droplets size={11} /> {s.water}</span>
-                  </div>
-                  {s.note && (
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.4, fontStyle: 'italic' }}>
-                      {s.note}
+              {liveSchedule.map((s) => {
+                const isSelected = selectedZoneId === s.id
+                return (
+                  <div
+                    key={s.id}
+                    className="schedule-item"
+                    onClick={() => setSelectedZoneId(s.id === selectedZoneId ? null : s.id)}
+                    style={{
+                      cursor: 'pointer',
+                      borderColor: isSelected ? 'var(--green-accent)' : undefined,
+                      borderLeftWidth: isSelected ? '4px' : undefined,
+                      borderLeftColor: isSelected ? 'var(--green-accent)' : undefined,
+                      background: isSelected ? 'rgba(34, 197, 94, 0.08)' : undefined,
+                      transition: 'var(--transition)',
+                    }}
+                  >
+                    <div className="schedule-top">
+                      <div className="schedule-zone">
+                        {s.zoneName}
+                      </div>
+                      <div className={`badge ${
+                        s.status === 'Complete' ? 'badge-green' :
+                        s.status === 'In Progress' ? 'badge-blue' :
+                        s.status === 'Scheduled' ? 'badge-blue' :
+                        s.status === 'Paused – Rain' ? 'badge-purple' :
+                        'badge-orange'
+                      }`}>{s.status}</div>
                     </div>
-                  )}
-                  <div className="progress-bar" style={{ marginTop: 8 }}>
-                    <div className="progress-fill" style={{ width: `${s.moisture}%` }} />
+                    <div className="schedule-crop" style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span>{s.crop}</span>
+                      <span className="badge" style={{ background: 'var(--bg-card2)', color: 'var(--text-secondary)', border: '1px solid var(--border)', fontSize: 10 }}>
+                        {s.soil} Soil • {s.areaHa} Ha
+                      </span>
+                    </div>
+                    <div className="schedule-meta">
+                      <span><Calendar size={11} /> {s.time}</span>
+                      <span><Droplets size={11} /> {s.water}</span>
+                    </div>
+                    {s.note && (
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.4, fontStyle: 'italic' }}>
+                        {s.note}
+                      </div>
+                    )}
+                    <div className="progress-bar" style={{ marginTop: 8 }}>
+                      <div
+                        className="progress-fill"
+                        style={{
+                          width: `${s.moisture}%`,
+                          background: s.moisture < 35 ? 'var(--orange)' : s.moisture > 85 ? 'var(--blue)' : undefined
+                        }}
+                      />
+                    </div>
+                    <div className="text-sm text-muted" style={{ marginTop: 3 }}>
+                      Soil Moisture: <strong>{s.moisture}%</strong> {s.moisture < 35 ? '⚠️ Low' : s.moisture > 80 ? '💧 Saturated' : '✅ Optimal'}
+                    </div>
                   </div>
-                  <div className="text-sm text-muted" style={{ marginTop: 3 }}>Soil Moisture: {s.moisture}%</div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
 
