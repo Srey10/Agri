@@ -122,3 +122,23 @@
 /* Reply input */
 .forum-reply-input { display: flex; gap: 6px; margin-top: 4px; }
 .forum-reply-input .input { flex: 1; }
+
+@media (max-width: 900px) {
+  .kh-main {
+    grid-template-columns: 1fr;
+  }
+  .kh-chat-col {
+    height: 65vh;
+    min-height: 400px;
+  }
+}
+
+@media (max-width: 640px) {
+  .kh-header {
+    flex-direction: column;
+    gap: 10px;
+  }
+  .msg-bubble {
+    max-width: 90%;
+  }
+}

@@ -14,7 +14,9 @@ import {
   Plus,
   ChevronDown,
   Microscope,
-  MessageSquare
+  MessageSquare,
+  Menu,
+  X
 } from 'lucide-react'
 
 import { getFarmInfo } from '../data/farm'
@@ -82,6 +84,7 @@ export default function Layout({ user, onLogout }) {
   )
 
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   // Change website language
   const changeLanguage = (lang) => {
@@ -105,18 +108,33 @@ export default function Layout({ user, onLogout }) {
 
   return (
     <div className="layout">
+      {/* Mobile Backdrop */}
+      {sidebarOpen && (
+        <div
+          className="sidebar-backdrop"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
 
       {/* Sidebar */}
-      <aside className="sidebar">
+      <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
 
         <div className="sidebar-logo">
           <div className="logo-icon">🌾</div>
 
-          <div>
+          <div style={{ flex: 1 }}>
             <div className="logo-title">
               AgriSense
             </div>
           </div>
+
+          <button
+            className="mobile-close-btn"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="Close navigation"
+          >
+            <X size={18} />
+          </button>
         </div>
 
         <div className="sidebar-user">
@@ -162,6 +180,7 @@ export default function Layout({ user, onLogout }) {
                 key={path}
                 to={path}
                 end={exact}
+                onClick={() => setSidebarOpen(false)}
                 className={({ isActive }) =>
                   `nav-item ${isActive ? 'active' : ''}`
                 }
@@ -245,6 +264,13 @@ export default function Layout({ user, onLogout }) {
         <header className="topbar">
 
           <div className="topbar-left">
+            <button
+              className="mobile-menu-btn"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Open navigation"
+            >
+              <Menu size={20} />
+            </button>
 
             <div className="topbar-breadcrumb">
 

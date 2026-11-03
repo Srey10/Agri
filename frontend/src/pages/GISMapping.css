@@ -90,3 +90,25 @@
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
+@media (max-width: 1024px) {
+  .gis-main {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .gis-header {
+    flex-direction: column;
+    gap: 10px;
+  }
+  .gis-map-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .gis-map-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+}

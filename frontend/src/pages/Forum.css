@@ -212,3 +212,35 @@
   background: rgba(239,68,68,0.15); border: 1px solid var(--red);
   color: #fca5a5; padding: 8px 12px; border-radius: var(--radius-sm); font-size: 13px;
 }
+
+@media (max-width: 768px) {
+  .forum-page {
+    padding: 16px 12px;
+  }
+  .forum-body {
+    flex-direction: column;
+  }
+  .forum-categories {
+    width: 100%;
+    min-width: 100%;
+    position: static;
+    flex-direction: row;
+    overflow-x: auto;
+    padding-bottom: 6px;
+  }
+  .cat-pill {
+    white-space: nowrap;
+    padding: 8px 12px;
+  }
+  .forum-toolbar {
+    flex-direction: column;
+  }
+  .forum-header {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .forum-header button {
+    width: 100%;
+    justify-content: center;
+  }
+}
