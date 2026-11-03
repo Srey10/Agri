@@ -1,20 +1,14 @@
 /* eslint-disable no-unused-vars */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Thermometer, Droplets, Wind, AlertTriangle, Clock, MapPin } from 'lucide-react'
 import MapView from '../components/MapView'
 import AdvisoryCard from '../components/AdvisoryCard'
-import { FARM_BOUNDARY, buildZones, classifyHealth, healthColor, fetchRainfall } from './GISMapping'
-import { getFarmInfo } from '../data/farm'
+import { buildZones, classifyHealth, healthColor, fetchRainfall } from './GISMapping'
+import { getFarmInfo, getFieldFeature, getBoundaryCenter } from '../data/farm'
 import './Dashboard.css'
 
-// Sample farm centre used for weather and the GIS demo (not yet per-farmer)
-const FARM_LAT = 19.4308
-const FARM_LNG = 74.9010
-
-const partialZones = buildZones(FARM_BOUNDARY)
-
 // Fetch live weather + forecast from Open-Meteo for the exact farm location
-async function fetchWeather() {
+async function fetchWeather(FARM_LAT, FARM_LNG) {
   const url =
     `https://api.open-meteo.com/v1/forecast` +
     `?latitude=${FARM_LAT}&longitude=${FARM_LNG}` +
@@ -30,8 +24,8 @@ async function fetchWeather() {
 function weatherAlert(code, precipSum) {
   if (code >= 95) return { level: 'high', text: 'Thunderstorm activity detected near farm. Secure equipment and pause field operations.' }
   if (code >= 61) return { level: 'medium', text: 'Rain expected. Monitor waterlogging in low-lying zones. Pause fertiliser application.' }
-  if (precipSum < 1) return { level: 'medium', text: 'Dry spell forecast for next 3 days. Sugarcane in growth phase — activate drip irrigation on all blocks.' }
-  return { level: 'low', text: 'Weather conditions are favourable for sugarcane growth. Continue normal operations.' }
+  if (precipSum < 1) return { level: 'medium', text: 'Dry spell forecast for next 3 days. Plan irrigation for your crops across all zones.' }
+  return { level: 'low', text: 'Weather conditions are favourable for crop growth. Continue normal operations.' }
 }
 
 // UV index label
@@ -86,7 +80,7 @@ function generateActivity(zones, weather) {
     activities.push({
       icon: '🌤️', color: '#eab308',
       title: `Temperature: ${weather.current.temperature_2m}°C`,
-      sub: 'Conditions within normal range for sugarcane growth. Monitor afternoon heat.',
+      sub: 'Conditions within a normal range. Monitor afternoon heat.',
       time: '5 mins ago'
     })
   }
@@ -115,23 +109,33 @@ function generateInsight(zones, weather, farmName) {
   }
 
   if (problematic.length > 0) {
-    const soilTypes = [...new Set(problematic.map(z => z.soil))]
-    return `Zone${problematic.length > 1 ? 's' : ''} ${problematic.map(z => z.id + 1).join(', ')} (${soilTypes.join('/')}) show critical stress — NDVI below 0.40 with rainfall under 1mm. At ${temp ?? '—'}°C and ${humidity ?? '—'}% humidity, risk of red rot and moisture stress is elevated. Recommend immediate soil sampling and potassium sulphate application at 50 kg/ha.`
+    const soilTypes = [...new Set(problematic.map(z => z.soil).filter(Boolean))]
+    return `Zone${problematic.length > 1 ? 's' : ''} ${problematic.map(z => z.id + 1).join(', ')} ${soilTypes.length ? `(${soilTypes.join('/')}) ` : ''}show critical stress — NDVI below 0.40 with rainfall under 1mm. At ${temp ?? '—'}°C and ${humidity ?? '—'}% humidity, risk of red rot and moisture stress is elevated. Recommend immediate soil sampling and potassium sulphate application at 50 kg/ha.`
   }
 
   return `${moderate.length} zones at moderate health. With ${rain ?? 0}mm current rainfall and ${temp ?? '—'}°C temperature, increase drip irrigation by 15% on Clay-soil zones. Apply foliar micronutrient spray within 48 hours.`
 }
 
-function buildFieldCards(farm) {
+// Up to three summary cards, each covering a consecutive group of the field's zones.
+function buildFieldCards(farm, zoneCount) {
   const prefix = farm.fieldId || 'FIELD'
-  const location = [farm.farmName, farm.location].filter(Boolean).join(', ')
-  return ['North Block', 'Central Block', 'South Block'].map((name, i) => ({
-    id: `${prefix}-Z0${i + 1}`, name, crop: farm.crop || 'Crop not set', location,
-  }))
+  const location = [farm.farmName, farm.fieldName, farm.location].filter(Boolean).join(', ')
+  const size = Math.max(1, Math.ceil(zoneCount / 3))
+  const cards = []
+  for (let i = 0; i < 3 && i * size < zoneCount; i++) {
+    const from = i * size + 1
+    const to = Math.min((i + 1) * size, zoneCount)
+    cards.push({ id: `${prefix}-Z0${i + 1}`, name: from === to ? `Zone ${from}` : `Zones ${from}–${to}`, crop: farm.crop || 'Crop not set', location })
+  }
+  return cards
 }
 
-export default function Dashboard({ user }) {
-  const farm = getFarmInfo(user)
+export default function Dashboard({ user, field }) {
+  const farm = getFarmInfo(user, field)
+  // Zones and weather location come from the farmer's own saved boundary
+  const boundary = useMemo(() => getFieldFeature(field), [field])
+  const partialZones = useMemo(() => buildZones(boundary), [boundary])
+  const [farmLat, farmLng] = useMemo(() => getBoundaryCenter(boundary), [boundary])
   const [currentTime, setCurrentTime] = useState(new Date())
   const [dashZones, setDashZones] = useState(partialZones)
   const [weather, setWeather] = useState(null)
@@ -146,11 +150,11 @@ export default function Dashboard({ user }) {
 
   // Fetch live weather for exact farm location
   useEffect(() => {
-    fetchWeather()
+    fetchWeather(farmLat, farmLng)
       .then(data => setWeather(data))
       .catch(() => setWeather(null))
       .finally(() => setWeatherLoading(false))
-  }, [])
+  }, [farmLat, farmLng])
 
   // Fetch live rainfall per zone and classify health
 // Fetch live rainfall + Sentinel-2 NDVI per zone
@@ -182,7 +186,7 @@ useEffect(() => {
               data
             )
 
-            return data.ndvi
+            return data.ndvi ?? null
           } catch (error) {
             console.error(
               `Dashboard NDVI failed for zone ${zone.id + 1}:`,
@@ -220,7 +224,7 @@ useEffect(() => {
   }
 
   loadDashboardZones()
-}, [])
+}, [partialZones])
 
   const healthyCnt = dashZones.filter(z => z.health === 'Healthy').length
   const moderateCnt = dashZones.filter(z => z.health === 'Moderate').length
@@ -252,7 +256,11 @@ useEffect(() => {
       <div className="dash-header">
         <div>
           <h1 className="dash-title">🌾 {farm.farmName} – Command Center</h1>
-          <p className="dash-sub">{farm.location ? `${farm.location} · ` : ''}{currentTime.toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+          <p className="dash-sub">{[
+            farm.farmerName && `Farmer: ${farm.farmerName}`,
+            farm.fieldName && `Field: ${farm.fieldName}${farm.fieldAreaHa != null ? ` (${farm.fieldAreaHa.toFixed(2)} ha)` : ''}`,
+            farm.location,
+          ].filter(Boolean).join(' · ')}{' · '}{currentTime.toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
         </div>
         <div className="dash-header-right">
           <div className={`badge ${riskBadge}`}><span className={`dot dot-${riskLevel === 'HIGH' ? 'red' : riskLevel === 'MODERATE' ? 'orange' : 'green'}`}></span> {riskLevel} RISK</div>
@@ -285,6 +293,8 @@ useEffect(() => {
         zones={dashZones}
         temp={temp}
         rainfall={precipitation}
+        crop={farm.crop}
+        location={farm.location}
         ready={!zonesLoading && !weatherLoading}
       />
       
@@ -352,7 +362,7 @@ useEffect(() => {
             <div style={{ height: 360 }}>
               <MapView
                 zones={dashZones}
-                farmBoundary={FARM_BOUNDARY}
+                farmBoundary={boundary}
                 onZoneClick={() => {}}
                 selectedZoneId={null}
               />
@@ -366,10 +376,11 @@ useEffect(() => {
 
           {/* Zone summary cards — driven by live data */}
           <div className="fields-row">
-            {buildFieldCards(farm).map((f, i) => {
+            {buildFieldCards(farm, dashZones.length).map((f, i) => {
               // Map field cards to zone groups
               const zoneGroup = dashZones.slice(i * Math.ceil(dashZones.length / 3), (i + 1) * Math.ceil(dashZones.length / 3))
-              const avgNdvi = zoneGroup.length ? (zoneGroup.reduce((s, z) => s + z.ndvi, 0) / zoneGroup.length).toFixed(2) : '—'
+              const ndviVals = zoneGroup.filter(z => z.ndvi !== null && z.ndvi !== undefined).map(z => z.ndvi)
+              const avgNdvi = ndviVals.length ? (ndviVals.reduce((s, v) => s + v, 0) / ndviVals.length).toFixed(2) : '—'
               const avgRain = zoneGroup.length && zoneGroup[0].rainfall !== null
                 ? (zoneGroup.reduce((s, z) => s + (z.rainfall || 0), 0) / zoneGroup.length).toFixed(1)
                 : '—'

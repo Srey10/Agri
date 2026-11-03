@@ -11,8 +11,8 @@ const COMMON_DISEASES = [
   { name: 'Ratoon Stunting', emoji: '🟤', severity: 'Low', description: 'Caused by Leifsonia xyli. Stunted growth, reduced tillering.', action: 'Hot water treatment at 50°C for 2 hours.' },
 ]
 
-export default function CropDisease({ user }) {
-  const farm = getFarmInfo(user)
+export default function CropDisease({ user, field }) {
+  const farm = getFarmInfo(user, field)
   const [dragOver, setDragOver] = useState(false)
   const [image, setImage] = useState(null)
   const [imageUrl, setImageUrl] = useState(null)
@@ -83,12 +83,12 @@ export default function CropDisease({ user }) {
             Crop Disease Detection
           </h1>
           <p className="dash-sub">
-            {farm.farmName} · Upload a crop image for disease analysis
+            {farm.farmName}{farm.fieldName ? ` · ${farm.fieldName}` : ''} · Upload a crop image for disease analysis
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <div className="badge badge-blue">Model Connected</div>
-          <div className="badge badge-blue">Sugarcane</div>
+          <div className="badge badge-blue" title="The disease detection model is trained for sugarcane only">Sugarcane model</div>
         </div>
       </div>
 

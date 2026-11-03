@@ -318,7 +318,7 @@ Always respond in the selected language.
                 {/* User Avatar */}
                 {m.role === 'user' && (
                   <div className="msg-avatar user-avatar">
-                    {user?.name?.[0] || 'A'}
+                    {user?.name?.[0]?.toUpperCase() || '?'}
                   </div>
                 )}
 
