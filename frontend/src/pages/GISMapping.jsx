@@ -43,14 +43,6 @@ export const NDVI_VALUES = [
 ]
 
 // eslint-disable-next-line react-refresh/only-export-components
-export const SOIL_VALUES = [
-  'Clay',  'Loam',  'Sandy', 'Clay',
-  'Loam',  'Sandy', 'Clay',  'Loam',
-  'Sandy', 'Clay',  'Loam',  'Sandy',
-  'Clay',  'Loam',  'Sandy', 'Clay',
-]
-
-// eslint-disable-next-line react-refresh/only-export-components
 export function classifyHealth(ndvi, rainfall) {
   if (rainfall === null || rainfall === undefined) {
     if (ndvi >= 0.65) return 'Healthy'
@@ -96,7 +88,6 @@ export function buildZones(farmBoundary) {
       areaM2,
       areaHa,
       ndvi: NDVI_VALUES[zones.length] ?? 0.5,
-      soil: SOIL_VALUES[zones.length] ?? 'Loam',
       rainfall: null,
       health: null,
       color: null,
@@ -384,13 +375,6 @@ export default function GISMapping() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
                     <span className="text-sm text-muted">0</span>
                     <span className="text-sm text-muted">1.0</span>
-                  </div>
-                </div>
-
-                <div style={{ marginTop: 14 }}>
-                  <div className="card-section-title"><Droplets size={12} style={{ marginRight: 4 }} /> Soil Type</div>
-                  <div style={{ marginTop: 8, fontSize: 14, fontWeight: 600, color: 'var(--teal)' }}>
-                    {selectedZone.soil}
                   </div>
                 </div>
               </div>

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { MapContainer, TileLayer, Polygon, Popup, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -98,25 +98,37 @@ export default function MapView({ zones = [], farmBoundary, onZoneClick, selecte
               fillColor: zone.color || '#888888',
               fillOpacity: 0.55,
             }}
-            eventHandlers={{ click: () => onZoneClick && onZoneClick(zone) }}
+            eventHandlers={onZoneClick ? { click: () => onZoneClick(zone) } : undefined}
           >
             <Popup>
-              <div style={{ fontFamily: 'Inter, sans-serif', minWidth: 180, fontSize: 12 }}>
-                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8, borderBottom: '1px solid #eee', paddingBottom: 6 }}>
-                  Zone {zone.id + 1}
+              <div style={{ fontFamily: 'Inter, sans-serif', minWidth: 210, fontSize: 13, color: '#1e293b' }}>
+                <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 8, borderBottom: '1px solid #e2e8f0', paddingBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>🌾 Plot {zone.id + 1}</span>
+                  <span style={{
+                    fontSize: 11,
+                    padding: '2px 8px',
+                    borderRadius: 12,
+                    fontWeight: 700,
+                    background: zone.health === 'Healthy' ? '#dcfce7' : zone.health === 'Moderate' ? '#fef9c3' : '#fee2e2',
+                    color: zone.health === 'Healthy' ? '#15803d' : zone.health === 'Moderate' ? '#854d0e' : '#b91c1c'
+                  }}>
+                    {zone.health === 'Healthy' ? '🟢 Healthy' : zone.health === 'Moderate' ? '🟡 Needs Care' : '🔴 Unhealthy'}
+                  </span>
                 </div>
-                <div style={{ marginBottom: 4 }}>
-                  Status:{' '}
-                  <strong style={{ color: zone.color || '#888' }}>
-                    {zone.health || '—'}
-                  </strong>
+                <div style={{ marginBottom: 6, fontSize: 12, lineHeight: 1.4 }}>
+                  <strong>Advice: </strong>
+                  {zone.health === 'Healthy'
+                    ? 'Crops are thriving. Continue regular watering.'
+                    : zone.health === 'Moderate'
+                    ? 'Mild moisture stress. Run drip irrigation today.'
+                    : 'High stress detected! Inspect leaves & irrigate immediately.'}
                 </div>
-                <div style={{ marginBottom: 4 }}>NDVI: <strong>{zone.ndvi?.toFixed(2) ?? '—'}</strong></div>
-                <div style={{ marginBottom: 4 }}>Soil: <strong>{zone.soil ?? '—'}</strong></div>
-                <div style={{ marginBottom: 4 }}>
-                  Rainfall: <strong>{zone.rainfall !== null && zone.rainfall !== undefined ? `${zone.rainfall} mm` : 'N/A'}</strong>
+                <div style={{ marginBottom: 4, fontSize: 12, color: '#64748b' }}>
+                  Rain Today: <strong style={{ color: '#0f172a' }}>{zone.rainfall !== null && zone.rainfall !== undefined ? (zone.rainfall > 0 ? `${zone.rainfall} mm` : '0 mm (Dry)') : '0 mm'}</strong>
                 </div>
-                <div>Area: <strong>{zone.areaHa ?? '—'} Ha</strong></div>
+                <div style={{ fontSize: 12, color: '#64748b' }}>
+                  Plot Size: <strong style={{ color: '#0f172a' }}>{zone.areaHa ?? '—'} Hectares</strong>
+                </div>
               </div>
             </Popup>
           </Polygon>

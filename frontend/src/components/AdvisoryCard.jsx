@@ -18,7 +18,7 @@ export default function AdvisoryCard({ zones, temp, rainfall, ready }) {
     setError('')
     try {
       const summary = zones
-        .map(z => `Zone ${z.id + 1}: health=${z.health}, NDVI=${z.ndvi?.toFixed?.(2) ?? 'n/a'}, soil=${z.soil}`)
+        .map(z => `Zone ${z.id + 1}: health=${z.health}, NDVI=${z.ndvi?.toFixed?.(2) ?? 'n/a'}`)
         .join('\n')
 
       const prompt = `You are an agricultural advisor for a sugarcane farm in Maharashtra, India.

@@ -1,6 +1,6 @@
 /* eslint-disable no-unused-vars */
 import { useState, useEffect } from 'react'
-import { Thermometer, Droplets, Wind, AlertTriangle, Clock, MapPin } from 'lucide-react'
+import { Thermometer, Droplets, Wind, AlertTriangle, Clock, MapPin, Bell } from 'lucide-react'
 import MapView from '../components/MapView'
 import AdvisoryCard from '../components/AdvisoryCard'
 import { FARM_BOUNDARY, buildZones, classifyHealth, healthColor, fetchRainfall } from './GISMapping'
@@ -25,35 +25,43 @@ async function fetchWeather() {
   return data
 }
 
-// Map WMO weather code to a human-readable alert description
-function weatherAlert(code, precipSum) {
-  if (code >= 95) return { level: 'high', text: 'Thunderstorm activity detected near farm. Secure equipment and pause field operations.' }
-  if (code >= 61) return { level: 'medium', text: 'Rain expected. Monitor waterlogging in low-lying zones. Pause fertiliser application.' }
-  if (precipSum < 1) return { level: 'medium', text: 'Dry spell forecast for next 3 days. Sugarcane in growth phase — activate drip irrigation on all blocks.' }
-  return { level: 'low', text: 'Weather conditions are favourable for sugarcane growth. Continue normal operations.' }
+// Map weather to farmer-friendly alert
+function weatherAlert(code, precipSum, temp) {
+  if (code >= 95) return { level: 'high', text: '⛈️ Storm warning near your farm! Secure equipment and pause field operations.' }
+  if (code >= 61) return { level: 'medium', text: '🌧️ Rain expected. Hold off on fertilizer spraying and watch for standing water.' }
+  if (temp > 36) return { level: 'medium', text: '🔥 High heat today. Water sugarcane early morning or late evening to prevent scorch.' }
+  if (precipSum < 1) return { level: 'medium', text: '☀️ Dry spell continuing. Activate drip irrigation on all sugarcane blocks today.' }
+  return { level: 'low', text: '✅ Favourable weather for crop growth. Continue routine farm operations.' }
 }
 
-// UV index label
-function uvLabel(uv) {
-  if (uv >= 11) return 'Extreme'
-  if (uv >= 8) return 'Very High'
-  if (uv >= 6) return 'High'
-  if (uv >= 3) return 'Moderate'
-  return 'Low'
+// Spraying suitability helper
+function getSprayCondition(windSpeed, precipitation, temp) {
+  if (precipitation > 0) return { status: 'Hold Off', reason: 'Rain washes away spray', safe: false }
+  if (windSpeed > 20) return { status: 'Too Windy', reason: 'Wind causes spray drift', safe: false }
+  if (temp > 35) return { status: 'Spray at Dusk', reason: 'Avoid rapid evaporation in peak heat', safe: true }
+  return { status: 'Good to Spray', reason: 'Calm wind & dry leaves', safe: true }
 }
 
-// Generate activity feed dynamically from zone health data
+// Generate farmer-friendly activity feed
 function generateActivity(zones, weather) {
   const activities = []
   const problematic = zones.filter(z => z.health === 'Problematic')
   const moderate = zones.filter(z => z.health === 'Moderate')
+  const healthy = zones.filter(z => z.health === 'Healthy')
   const now = new Date()
 
   if (problematic.length > 0) {
     activities.push({
       icon: '🔴', color: '#ef4444',
-      title: `${problematic.length} Problematic Zone${problematic.length > 1 ? 's' : ''} Detected`,
-      sub: `Zone${problematic.length > 1 ? 's' : ''} ${problematic.map(z => z.id + 1).join(', ')} show low NDVI + insufficient rainfall. Immediate attention required.`,
+      title: `${problematic.length} Plot${problematic.length > 1 ? 's' : ''} Need Urgent Attention`,
+      sub: `Plot${problematic.length > 1 ? 's' : ''} ${problematic.map(z => z.id + 1).join(', ')} show crop stress. Check for dry soil and water immediately.`,
+      time: 'Just now'
+    })
+  } else if (moderate.length > 0) {
+    activities.push({
+      icon: '🟡', color: '#eab308',
+      title: `${moderate.length} Plot${moderate.length > 1 ? 's' : ''} Under Observation`,
+      sub: `Plot${moderate.length > 1 ? 's' : ''} ${moderate.map(z => z.id + 1).join(', ')} show slight moisture stress. Run regular drip irrigation.`,
       time: 'Just now'
     })
   }
@@ -61,15 +69,15 @@ function generateActivity(zones, weather) {
   if (weather?.current?.precipitation > 0) {
     activities.push({
       icon: '🌧️', color: '#3b82f6',
-      title: `Live Rainfall: ${weather.current.precipitation} mm`,
-      sub: `Current precipitation recorded at farm location. Soil moisture levels updating.`,
+      title: `Rain Recorded: ${weather.current.precipitation} mm`,
+      sub: `Natural moisture received. Soil is moist, drip irrigation can be paused.`,
       time: `${now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`
     })
   } else {
     activities.push({
       icon: '💧', color: '#22c55e',
-      title: 'No Active Rainfall',
-      sub: `0 mm precipitation at farm. Drip irrigation recommended for ${moderate.length + problematic.length} at-risk zones.`,
+      title: 'No Rain Today (Dry Soil)',
+      sub: 'Drip irrigation recommended for 2 hours for sugarcane root zones.',
       time: `${now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`
     })
   }
@@ -77,24 +85,17 @@ function generateActivity(zones, weather) {
   if (weather?.current?.temperature_2m > 35) {
     activities.push({
       icon: '🌡️', color: '#f97316',
-      title: `High Temperature Alert: ${weather.current.temperature_2m}°C`,
-      sub: 'Temperatures above 35°C accelerate evapotranspiration. Increase irrigation frequency.',
-      time: '5 mins ago'
-    })
-  } else if (weather?.current?.temperature_2m) {
-    activities.push({
-      icon: '🌤️', color: '#eab308',
-      title: `Temperature: ${weather.current.temperature_2m}°C`,
-      sub: 'Conditions within normal range for sugarcane growth. Monitor afternoon heat.',
-      time: '5 mins ago'
+      title: `High Heat Advisory: ${weather.current.temperature_2m}°C`,
+      sub: 'Sugarcane transpires rapidly in hot weather. Ensure water reaches deeper roots.',
+      time: '15 mins ago'
     })
   }
 
   activities.push({
-    icon: '📡', color: '#14b8a6',
-    title: 'GIS Zone Analysis Complete',
-    sub: `${zones.length} zones analysed. Health classification updated from live rainfall data.`,
-    time: '10 mins ago'
+    icon: '🛰️', color: '#14b8a6',
+    title: 'Daily Farm Satellite Scan Complete',
+    sub: `All 16 plots inspected — ${healthy.length} plots are green and healthy.`,
+    time: '30 mins ago'
   })
 
   return activities
@@ -114,11 +115,10 @@ function generateInsight(zones, weather) {
   }
 
   if (problematic.length > 0) {
-    const soilTypes = [...new Set(problematic.map(z => z.soil))]
-    return `Zone${problematic.length > 1 ? 's' : ''} ${problematic.map(z => z.id + 1).join(', ')} (${soilTypes.join('/')}) show critical stress — NDVI below 0.40 with rainfall under 1mm. At ${temp ?? '—'}°C and ${humidity ?? '—'}% humidity, risk of red rot and moisture stress is elevated. Recommend immediate soil sampling and potassium sulphate application at 50 kg/ha.`
+    return `Zone${problematic.length > 1 ? 's' : ''} ${problematic.map(z => z.id + 1).join(', ')} show critical stress — low vegetation density with rainfall under 1mm. At ${temp ?? '—'}°C and ${humidity ?? '—'}% humidity, risk of red rot and moisture stress is elevated. Recommend immediate inspection and potassium sulphate application at 50 kg/ha.`
   }
 
-  return `${moderate.length} zones at moderate health. With ${rain ?? 0}mm current rainfall and ${temp ?? '—'}°C temperature, increase drip irrigation by 15% on Clay-soil zones. Apply foliar micronutrient spray within 48 hours.`
+  return `${moderate.length} zones at moderate health. With ${rain ?? 0}mm current rainfall and ${temp ?? '—'}°C temperature, increase drip irrigation by 15% on stressed zones. Apply foliar micronutrient spray within 48 hours.`
 }
 
 const fields = [
@@ -225,22 +225,185 @@ useEffect(() => {
   const temp = weather?.current?.temperature_2m
   const humidity = weather?.current?.relative_humidity_2m
   const windSpeed = weather?.current?.wind_speed_10m
-  const uvIndex = weather?.current?.uv_index
   const precipitation = weather?.current?.precipitation ?? 0
   const weatherCode = weather?.current?.weather_code ?? 0
   const precipSum3d = weather?.daily?.precipitation_sum?.reduce((a, b) => a + b, 0) ?? 0
 
-  const alert = weatherAlert(weatherCode, precipSum3d)
+  const alert = weatherAlert(weatherCode, precipSum3d, temp)
+  const sprayCondition = getSprayCondition(windSpeed, precipitation, temp)
   const activity = generateActivity(dashZones, weather)
-  const aiInsight = generateInsight(dashZones, weather)
 
-  // Risk badge based on problematic zones + weather
+  const [selectedPlotModal, setSelectedPlotModal] = useState(null)
+  const [showAlertsModal, setShowAlertsModal] = useState(false)
+  const [showAutoToast, setShowAutoToast] = useState(true)
+
+  // Open modal pop-up with farmer guidance when a zone is clicked on map
+  const openZoneModal = (zone) => {
+    const isHealthy = zone.health === 'Healthy'
+    const isModerate = zone.health === 'Moderate'
+    setSelectedPlotModal({
+      zoneId: zone.id,
+      title: `Plot ${zone.id + 1} – Field Inspection`,
+      tag: 'Plot Specific Advice',
+      status: isHealthy ? 'Healthy (Good Growth)' : isModerate ? 'Needs Care (Mild Stress)' : 'Unhealthy (Urgent Action Needed)',
+      healthClass: isHealthy ? 'healthy' : isModerate ? 'moderate' : 'problem',
+      healthIcon: isHealthy ? '🌱' : isModerate ? '⚠️' : '🚨',
+      cropStatus: isHealthy
+        ? 'Crops are thriving with green leaves and vigorous growth.'
+        : isModerate
+        ? 'Mild moisture deficit or stress noted. Growth slightly slowed.'
+        : 'High stress detected! Crops need immediate physical inspection and irrigation.',
+      wateringAdvice: (zone.rainfall > 0)
+        ? `Natural rainfall received (${zone.rainfall} mm). Soil is moist; keep drip irrigation off today.`
+        : (temp > 35 ? 'High heat wave: Run drip irrigation for 2.5 to 3 hours in early morning or late evening.' : 'Normal dry weather: Run drip irrigation for 2 hours today to maintain root moisture.'),
+      sprayingAdvice: sprayCondition.safe
+        ? 'Good spraying conditions: gentle winds and dry leaves.'
+        : `Hold off on spraying today (${sprayCondition.reason}).`,
+      actionSteps: isHealthy
+        ? [
+            'Maintain regular watering schedule.',
+            'Canopy cover is dense and healthy.',
+            'No emergency intervention needed.'
+          ]
+        : isModerate
+        ? [
+            'Run drip irrigation for an additional 30-45 minutes on this plot today.',
+            'Inspect drip lateral lines for clogged drippers.',
+            'Re-check plot condition in 48 hours.'
+          ]
+        : [
+            'Urgent: Irrigate this plot immediately (run drip for 3 hours).',
+            'Physically walk this plot and check stalks/roots for borers or red rot.',
+            'Apply potassium or foliar micronutrients to help plants recover.'
+          ],
+      areaHa: zone.areaHa
+    })
+  }
+
+  // Open modal pop-up when a field block card is clicked
+  const openBlockModal = (field, zoneGroup) => {
+    const healthyCount = zoneGroup.filter(z => z.health === 'Healthy').length
+    const problemCount = zoneGroup.filter(z => z.health === 'Problematic').length
+    const modCount = zoneGroup.filter(z => z.health === 'Moderate').length
+    const isHealthy = problemCount === 0 && modCount <= 1
+    const isMod = problemCount === 0 && modCount > 1
+
+    setSelectedPlotModal({
+      title: `${field.name} (${field.id})`,
+      tag: 'Field Block Overview',
+      status: isHealthy ? 'Block Healthy' : isMod ? 'Block Needs Monitoring' : 'Block At Risk',
+      healthClass: isHealthy ? 'healthy' : isMod ? 'moderate' : 'problem',
+      healthIcon: isHealthy ? '🌾' : isMod ? '⚠️' : '🚨',
+      cropStatus: `${field.crop} · ${healthyCount} of ${zoneGroup.length} plots are green and healthy.`,
+      wateringAdvice: precipitation > 0
+        ? `Rainfall received (${precipitation} mm). Soil moisture is good, drip can stay off today.`
+        : (temp > 35 ? 'High temperature: Provide 3 hours of drip irrigation during cooler morning hours.' : 'Normal watering: 2 hours scheduled for this block today.'),
+      sprayingAdvice: sprayCondition.safe ? 'Safe spraying conditions today with calm breeze.' : `Spraying not recommended today: ${sprayCondition.reason}.`,
+      actionSteps: problemCount > 0
+        ? [
+            `Plots showing stress: ${zoneGroup.filter(z => z.health === 'Problematic').map(z => `Plot ${z.id + 1}`).join(', ')}.`,
+            'Check main drip lines and sub-valves for uniform pressure across rows.',
+            'Walk the block to inspect lower leaves and stems for early signs of disease.'
+          ]
+        : isMod
+        ? [
+            'Crops are stable with minor moisture stress in parts of the block.',
+            'Check edge rows to confirm drip water is reaching every plant.',
+            'Monitor afternoon leaf curling.'
+          ]
+        : [
+            'Block is healthy and developing according to schedule.',
+            'Continue routine watering and weed management.',
+            'All plots in this block passed the satellite crop check.'
+          ],
+      areaHa: zoneGroup.reduce((s, z) => s + (z.areaHa || 0), 0).toFixed(2)
+    })
+  }
+
+  // Overall farm status badge
   const riskLevel = problematicCnt >= 3 || (temp > 38) ? 'HIGH' :
     problematicCnt >= 1 || moderateCnt >= 5 ? 'MODERATE' : 'LOW'
   const riskBadge = riskLevel === 'HIGH' ? 'badge-red' : riskLevel === 'MODERATE' ? 'badge-yellow' : 'badge-green'
+  const riskLabel = riskLevel === 'HIGH' ? 'ACTION NEEDED' : riskLevel === 'MODERATE' ? 'MONITOR PLOTS' : 'ALL HEALTHY'
 
-  // Water demand: base 4.5 + temp factor + drought factor
-  const waterDemand = temp ? (4.5 + (temp - 30) * 0.08 + (precipitation < 1 ? 0.6 : 0)).toFixed(1) : '—'
+  // Farmer watering advice calculation
+  const wateringHours = precipitation > 2 ? '0 Hours' : (temp > 35 ? '3 Hours' : '2 Hours')
+  const wateringUnit = precipitation > 2 ? 'Rain Sufficient' : 'Drip Today'
+  const wateringSub = precipitation > 2
+    ? `Rain (${precipitation}mm) recorded — keep drip off`
+    : (temp > 35 ? `High heat (${temp}°C) — irrigate early morning` : 'Dry conditions — regular 2hr drip cycle recommended')
+
+  // Build live farm pop-up alerts dynamically
+  const activeAlerts = []
+  if (problematicCnt > 0) {
+    const badPlots = dashZones.filter(z => z.health === 'Problematic')
+    activeAlerts.push({
+      id: 'crop-problem',
+      level: 'urgent',
+      icon: '🚨',
+      title: `${problematicCnt} Plot${problematicCnt > 1 ? 's' : ''} Need Urgent Attention`,
+      message: `Plot${problematicCnt > 1 ? 's' : ''} ${badPlots.map(z => z.id + 1).join(', ')} show severe vegetation stress and low moisture. Crops need immediate watering and leaf inspection.`,
+      actionText: 'View Plot Guidance',
+      onAction: () => openZoneModal(badPlots[0])
+    })
+  } else if (moderateCnt > 0) {
+    const modPlots = dashZones.filter(z => z.health === 'Moderate')
+    activeAlerts.push({
+      id: 'crop-mod',
+      level: 'warning',
+      icon: '⚠️',
+      title: `${moderateCnt} Plot${moderateCnt > 1 ? 's' : ''} Under Observation`,
+      message: `Plot${moderateCnt > 1 ? 's' : ''} ${modPlots.map(z => z.id + 1).join(', ')} show mild moisture stress. Increase drip cycle by 30-45 minutes today.`,
+      actionText: 'Inspect Plot',
+      onAction: () => openZoneModal(modPlots[0])
+    })
+  }
+
+  if (temp > 35) {
+    activeAlerts.push({
+      id: 'weather-heat',
+      level: 'warning',
+      icon: '🔥',
+      title: `High Heat Advisory (${temp}°C)`,
+      message: 'Intense midday heat accelerates transpiration. Irrigate during early morning or after 5 PM to prevent leaf scorching.',
+      actionText: 'View Watering Advice',
+      onAction: () => openZoneModal(dashZones[0])
+    })
+  }
+
+  if (precipitation > 0) {
+    activeAlerts.push({
+      id: 'weather-rain',
+      level: 'info',
+      icon: '🌧️',
+      title: `Natural Rainfall Received (${precipitation} mm)`,
+      message: 'Natural moisture recorded at the farm. Pause drip irrigation today to save pump electricity and avoid root waterlogging.',
+      actionText: 'Got It',
+      onAction: null
+    })
+  } else if (precipSum3d < 1) {
+    activeAlerts.push({
+      id: 'weather-dry',
+      level: 'warning',
+      icon: '☀️',
+      title: '3-Day Dry Spell Active',
+      message: 'Zero rainfall forecasted for the next 72 hours. Sugarcane in tillering stage requires uninterrupted drip irrigation cycles.',
+      actionText: 'Irrigation Plan',
+      onAction: () => openZoneModal(dashZones[0])
+    })
+  }
+
+  if (!sprayCondition.safe) {
+    activeAlerts.push({
+      id: 'spray-alert',
+      level: 'warning',
+      icon: '🚜',
+      title: `Pause Chemical Spraying: ${sprayCondition.status}`,
+      message: `${sprayCondition.reason} (Wind: ${windSpeed} km/h). Wait for calm conditions before spraying nutrients or insecticides.`,
+      actionText: null,
+      onAction: null
+    })
+  }
 
   return (
     <div className="dashboard fade-in">
@@ -251,21 +414,42 @@ useEffect(() => {
           <p className="dash-sub">Mote Patil Farm House Rd, Maharashtra · {currentTime.toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
         </div>
         <div className="dash-header-right">
-          <div className={`badge ${riskBadge}`}><span className={`dot dot-${riskLevel === 'HIGH' ? 'red' : riskLevel === 'MODERATE' ? 'orange' : 'green'}`}></span> {riskLevel} RISK</div>
+          <button
+            className="header-alert-btn"
+            onClick={() => setShowAlertsModal(true)}
+            title="Click to view all active farm pop-up alerts"
+          >
+            <Bell size={15} />
+            <span>Pop-up Alerts</span>
+            {activeAlerts.length > 0 && (
+              <span className="header-alert-count">{activeAlerts.length}</span>
+            )}
+          </button>
+          <div className={`badge ${riskBadge}`}>
+            <span className={`dot dot-${riskLevel === 'HIGH' ? 'red' : riskLevel === 'MODERATE' ? 'orange' : 'green'}`}></span>
+            {riskLabel}
+          </div>
           <div className="live-time">{currentTime.toLocaleTimeString('en-IN')}</div>
         </div>
       </div>
 
-      {/* Alert Banner — driven by live weather */}
-      <div className={`alert-banner ${alert.level === 'high' ? 'alert-high' : alert.level === 'medium' ? 'alert-medium' : 'alert-low'}`}>
+      {/* Alert Banner — Clickable to open full alerts pop-up */}
+      <div
+        className={`alert-banner clickable ${alert.level === 'high' ? 'alert-high' : alert.level === 'medium' ? 'alert-medium' : 'alert-low'}`}
+        onClick={() => setShowAlertsModal(true)}
+        title="Click to open Farm Pop-up Alerts"
+      >
         <div className="alert-icon"><AlertTriangle size={20} /></div>
         <div className="alert-content">
           <div className="alert-title">
-            {alert.level === 'high' ? '⛈️' : alert.level === 'medium' ? '🌡️' : '✅'} Farm Weather Update — Mote Patil Sugarcane Farms
+            {alert.level === 'high' ? '⛈️' : alert.level === 'medium' ? '🌡️' : '✅'} Today's Weather & Crop Guidance
           </div>
-          <div className="alert-sub">{weatherLoading ? 'Fetching live weather data...' : alert.text}</div>
+          <div className="alert-sub">{weatherLoading ? 'Checking live farm weather...' : alert.text}</div>
         </div>
         <div className="alert-stats">
+          <div className="alert-view-pill">
+            <Bell size={12} /> {activeAlerts.length} Pop-up Alerts →
+          </div>
           <div className="alert-stat">
             <Thermometer size={16} className="text-red" />
             <span className="text-red font-bold">{weatherLoading ? '—' : `${temp}°C`}</span>
@@ -284,35 +468,41 @@ useEffect(() => {
         ready={!zonesLoading && !weatherLoading}
       />
       
-      {/* Top Stats — partially live */}
+      {/* Top Stats — Farmer Simplified */}
       <div className="stats-row">
         {[
           {
-            label: 'Predicted Water Demand',
-            value: waterDemand,
-            unit: 'M³ / Hectare',
+            label: "Today's Watering Need",
+            value: weatherLoading ? '—' : wateringHours,
+            unit: wateringUnit,
             icon: '💧',
-            sub: temp > 35 ? `High temp (${temp}°C) driving elevated demand` : `Based on live temp ${temp ?? '—'}°C & rainfall ${precipitation}mm`,
+            sub: weatherLoading ? 'Calculating...' : wateringSub,
             color: 'var(--blue)',
-            pct: Math.min(parseFloat(waterDemand) / 10 * 100, 100)
+            pct: precipitation > 2 ? 15 : (temp > 35 ? 90 : 60)
           },
           {
-            label: 'Zone Health Score',
-            value: zonesLoading ? '—' : Math.round((healthyCnt / dashZones.length) * 100) || 0,
-            unit: '% Healthy',
+            label: 'Crop Health Status',
+            value: zonesLoading ? '—' : `${healthyCnt} / ${dashZones.length}`,
+            unit: 'Plots Healthy',
             icon: '🌾',
-            sub: zonesLoading ? 'Analysing zones...' : `${healthyCnt} healthy · ${moderateCnt} moderate · ${problematicCnt} problem`,
-            color: problematicCnt > 2 ? 'var(--red)' : problematicCnt > 0 ? 'var(--yellow)' : 'var(--green-accent)',
+            sub: zonesLoading
+              ? 'Inspecting farm plots...'
+              : problematicCnt > 0
+              ? `🚨 ${problematicCnt} plot needs urgent water/check`
+              : moderateCnt > 0
+              ? `⚠️ ${moderateCnt} plots need monitoring`
+              : '🟢 All 16 plots are green and growing well',
+            color: problematicCnt > 0 ? 'var(--red)' : moderateCnt > 1 ? 'var(--yellow)' : 'var(--green-accent)',
             pct: zonesLoading ? 0 : Math.round((healthyCnt / dashZones.length) * 100)
           },
           {
-            label: 'Current Rainfall',
-            value: weatherLoading ? '—' : precipitation,
-            unit: 'mm now',
-            icon: '🌧️',
-            sub: weatherLoading ? 'Fetching...' : `3-day total: ${precipSum3d.toFixed(1)}mm · UV: ${uvLabel(uvIndex)}`,
-            color: precipitation > 3 ? 'var(--blue)' : precipitation > 0 ? 'var(--teal)' : 'var(--orange)',
-            pct: Math.min(precipitation * 20, 100)
+            label: 'Spraying Weather',
+            value: weatherLoading ? '—' : sprayCondition.status,
+            unit: sprayCondition.safe ? 'Safe today' : 'Wait',
+            icon: '🚜',
+            sub: weatherLoading ? 'Checking conditions...' : `${sprayCondition.reason} · Wind: ${windSpeed} km/h`,
+            color: sprayCondition.safe ? 'var(--teal)' : 'var(--orange)',
+            pct: sprayCondition.safe ? 85 : 30
           },
         ].map(stat => (
           <div key={stat.label} className="card stat-card fade-in">
@@ -338,63 +528,88 @@ useEffect(() => {
         <div className="dash-map-col">
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div className="map-header">
-              <div className="map-title">🗺️ Live GIS – Mote Patil Sugarcane Farms, Maharashtra</div>
+              <div className="map-title">🗺️ Farm Plots Health Map – Click any plot for quick details</div>
               <div className="map-controls">
                 <span className="badge badge-green">🌱 {healthyCnt} Healthy</span>
-                <span className="badge badge-yellow">⚠️ {moderateCnt} Moderate</span>
-                <span className="badge badge-red">🔴 {problematicCnt} Problem</span>
+                <span className="badge badge-yellow">⚠️ {moderateCnt} Need Care</span>
+                <span className="badge badge-red">🔴 {problematicCnt} At Risk</span>
               </div>
             </div>
             <div style={{ height: 360 }}>
               <MapView
                 zones={dashZones}
                 farmBoundary={FARM_BOUNDARY}
-                onZoneClick={() => {}}
-                selectedZoneId={null}
+                selectedZoneId={selectedPlotModal?.zoneId ?? null}
               />
             </div>
             <div className="map-legend">
-              <div className="legend-item"><span className="dot" style={{ background: '#22c55e' }}></span> Healthy Zone</div>
-              <div className="legend-item"><span className="dot" style={{ background: '#eab308' }}></span> Moderate Zone</div>
-              <div className="legend-item"><span className="dot" style={{ background: '#ef4444' }}></span> Problematic Zone</div>
+              <div className="legend-item"><span className="dot" style={{ background: '#22c55e' }}></span> 🟢 Healthy (Growing Well)</div>
+              <div className="legend-item"><span className="dot" style={{ background: '#eab308' }}></span> 🟡 Needs Attention</div>
+              <div className="legend-item"><span className="dot" style={{ background: '#ef4444' }}></span> 🔴 Unhealthy (Action Needed)</div>
             </div>
           </div>
 
-          {/* Zone summary cards — driven by live data */}
+          {/* Zone summary cards — Simplified for Farmers */}
           <div className="fields-row">
             {fields.map((f, i) => {
-              // Map field cards to zone groups
               const zoneGroup = dashZones.slice(i * Math.ceil(dashZones.length / 3), (i + 1) * Math.ceil(dashZones.length / 3))
-              const avgNdvi = zoneGroup.length ? (zoneGroup.reduce((s, z) => s + z.ndvi, 0) / zoneGroup.length).toFixed(2) : '—'
               const avgRain = zoneGroup.length && zoneGroup[0].rainfall !== null
                 ? (zoneGroup.reduce((s, z) => s + (z.rainfall || 0), 0) / zoneGroup.length).toFixed(1)
-                : '—'
+                : '0'
               const blockHealth = zoneGroup.filter(z => z.health === 'Healthy').length >= zoneGroup.length / 2 ? 'active'
                 : zoneGroup.filter(z => z.health === 'Problematic').length > 0 ? 'drought-risk' : 'irrigated'
+              const healthyInBlock = zoneGroup.filter(z => z.health === 'Healthy').length
               const healthScore = zoneGroup.length
-                ? Math.round((zoneGroup.filter(z => z.health === 'Healthy').length / zoneGroup.length) * 100)
+                ? Math.round((healthyInBlock / zoneGroup.length) * 100)
                 : 0
 
               return (
-                <div key={f.id} className="card card-hover field-card">
+                <div
+                  key={f.id}
+                  className="card card-hover field-card"
+                  onClick={() => openBlockModal(f, zoneGroup)}
+                  title="Click to view detailed farmer advice"
+                >
                   <div className="field-card-top">
                     <div>
                       <div className="field-card-id">{f.id}</div>
                       <div className="field-card-name">{f.name}</div>
                       <div className="field-card-loc"><MapPin size={11} /> {f.location}</div>
                     </div>
-                    <div className={`badge ${blockHealth === 'active' ? 'badge-green' : blockHealth === 'irrigated' ? 'badge-blue' : 'badge-orange'}`}>
-                      {blockHealth === 'active' ? '🟢 Healthy' : blockHealth === 'irrigated' ? '⚠️ Moderate' : '🔴 At Risk'}
+                    <div className={`badge ${blockHealth === 'active' ? 'badge-green' : blockHealth === 'irrigated' ? 'badge-yellow' : 'badge-red'}`}>
+                      {blockHealth === 'active' ? '🟢 Healthy' : blockHealth === 'irrigated' ? '🟡 Needs Care' : '🔴 At Risk'}
                     </div>
                   </div>
                   <div className="field-crop">{f.crop}</div>
+                  
+                  {/* Simplified Farmer Metrics (No NDVI!) */}
                   <div className="field-metrics">
-                    <div className="field-metric"><span>NDVI</span><strong>{avgNdvi}</strong></div>
-                    <div className="field-metric"><span>Rain</span><strong>{avgRain !== '—' ? `${avgRain}mm` : '—'}</strong></div>
-                    <div className="field-metric"><span>Health</span><strong className="text-green">{healthScore}%</strong></div>
+                    <div className="field-metric">
+                      <span>Condition</span>
+                      <strong style={{ color: blockHealth === 'active' ? 'var(--green-accent)' : blockHealth === 'irrigated' ? 'var(--yellow)' : 'var(--red)', fontSize: 13 }}>
+                        {blockHealth === 'active' ? 'Growing Well' : blockHealth === 'irrigated' ? 'Monitor Water' : 'Stressed'}
+                      </strong>
+                    </div>
+                    <div className="field-metric">
+                      <span>Water</span>
+                      <strong style={{ fontSize: 13 }}>
+                        {Number(avgRain) > 0 ? `${avgRain}mm Rain` : 'Drip Needed'}
+                      </strong>
+                    </div>
+                    <div className="field-metric">
+                      <span>Healthy Plots</span>
+                      <strong className="text-green" style={{ fontSize: 13 }}>
+                        {healthyInBlock} / {zoneGroup.length}
+                      </strong>
+                    </div>
                   </div>
+
                   <div className="progress-bar" style={{ marginTop: 8 }}>
                     <div className="progress-fill" style={{ width: `${healthScore}%` }} />
+                  </div>
+
+                  <div className="field-card-click-hint">
+                    👆 Click for Farmer Advice & Checklist
                   </div>
                 </div>
               )
@@ -407,18 +622,18 @@ useEffect(() => {
           {/* Live Weather */}
           <div className="card">
             <div className="card-section-title">
-              🌤️ Live Weather – Mote Patil Farm
+              🌤️ Live Farm Weather
               {!weatherLoading && <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--green-accent)', fontWeight: 400 }}>● LIVE</span>}
             </div>
             {weatherLoading ? (
-              <div style={{ color: 'var(--text-muted)', fontSize: 12, padding: '8px 0' }}>Fetching weather from Open-Meteo...</div>
+              <div style={{ color: 'var(--text-muted)', fontSize: 12, padding: '8px 0' }}>Fetching weather data...</div>
             ) : (
               <div className="weather-grid">
                 {[
-                  { icon: <Thermometer size={16} />, label: 'Temp', val: `${temp}°C`, color: temp > 35 ? 'var(--red)' : 'var(--orange)' },
+                  { icon: <Thermometer size={16} />, label: 'Temperature', val: `${temp}°C`, color: temp > 35 ? 'var(--red)' : 'var(--orange)' },
                   { icon: <Droplets size={16} />, label: 'Humidity', val: `${humidity}%`, color: 'var(--blue)' },
-                  { icon: <Wind size={16} />, label: 'Wind', val: `${windSpeed} km/h`, color: 'var(--teal)' },
-                  { icon: '☀️', label: 'UV Index', val: uvLabel(uvIndex), color: uvIndex >= 8 ? 'var(--red)' : 'var(--yellow)' },
+                  { icon: <Wind size={16} />, label: 'Wind Speed', val: `${windSpeed} km/h`, color: 'var(--teal)' },
+                  { icon: '🚜', label: 'Spraying', val: sprayCondition.status, color: sprayCondition.safe ? 'var(--green-accent)' : 'var(--orange)' },
                 ].map(w => (
                   <div key={w.label} className="weather-item" style={{ borderColor: w.color + '33' }}>
                     <span style={{ color: w.color }}>{w.icon}</span>
@@ -433,12 +648,12 @@ useEffect(() => {
           {/* Dynamic Activity Feed */}
           <div className="card" style={{ marginTop: 16 }}>
             <div className="card-section-title">
-              Recent Activity
+              Farm Updates & Tasks
               {!zonesLoading && <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--green-accent)', fontWeight: 400 }}>● LIVE</span>}
             </div>
             <div className="activity-list">
               {(zonesLoading || weatherLoading) ? (
-                <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>Loading live data...</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>Loading farm updates...</div>
               ) : (
                 activity.map((a, i) => (
                   <div key={i} className="activity-item">
@@ -453,11 +668,181 @@ useEffect(() => {
               )}
             </div>
           </div>
-
-          {/* Dynamic AI Insight */}
-          
-          </div>
         </div>
       </div>
+
+      {/* Farmer Advice Modal Pop-up */}
+      {selectedPlotModal && (
+        <div className="farmer-modal-overlay" onClick={() => setSelectedPlotModal(null)}>
+          <div className="farmer-modal" onClick={e => e.stopPropagation()}>
+            <div className="farmer-modal-header">
+              <div>
+                <span className="farmer-modal-tag">{selectedPlotModal.tag}</span>
+                <h2 className="farmer-modal-title">{selectedPlotModal.title}</h2>
+              </div>
+              <button
+                className="farmer-modal-close"
+                onClick={() => setSelectedPlotModal(null)}
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="farmer-modal-body">
+              <div className={`farmer-modal-status-banner ${selectedPlotModal.healthClass}`}>
+                <span className="farmer-modal-status-icon">{selectedPlotModal.healthIcon}</span>
+                <div>
+                  <strong>Condition: {selectedPlotModal.status}</strong>
+                  <p>{selectedPlotModal.cropStatus}</p>
+                </div>
+              </div>
+
+              <div className="farmer-checklist">
+                <h3>🚜 Farmer Checklist & Guidance</h3>
+
+                <div className="checklist-item">
+                  <div className="checklist-icon">💧</div>
+                  <div>
+                    <strong>Watering Advice</strong>
+                    <p>{selectedPlotModal.wateringAdvice}</p>
+                  </div>
+                </div>
+
+                <div className="checklist-item">
+                  <div className="checklist-icon">🌤️</div>
+                  <div>
+                    <strong>Spraying & Field Work</strong>
+                    <p>{selectedPlotModal.sprayingAdvice}</p>
+                  </div>
+                </div>
+
+                <div className="checklist-item">
+                  <div className="checklist-icon">📋</div>
+                  <div>
+                    <strong>Recommended Actions Today</strong>
+                    <ul className="checklist-steps">
+                      {selectedPlotModal.actionSteps.map((step, idx) => (
+                        <li key={idx}>{step}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <div className="farmer-modal-footer">
+                <button
+                  className="btn btn-primary"
+                  onClick={() => setSelectedPlotModal(null)}
+                >
+                  ✓ Understood, Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Bottom-Right Pop-up Alert Toast */}
+      {showAutoToast && activeAlerts.length > 0 && (
+        <div className="popup-toast-alert">
+          <div className="popup-toast-header">
+            <div className="popup-toast-title">
+              <span className="popup-toast-icon">{activeAlerts[0].icon}</span>
+              <div>
+                <strong>{activeAlerts[0].title}</strong>
+                <span className="popup-toast-time">Active Now · Farm Pop-up Alert</span>
+              </div>
+            </div>
+            <button
+              className="popup-toast-close"
+              onClick={() => setShowAutoToast(false)}
+              aria-label="Close"
+            >
+              ✕
+            </button>
+          </div>
+          <p className="popup-toast-msg">{activeAlerts[0].message}</p>
+          <div className="popup-toast-actions">
+            {activeAlerts[0].onAction && (
+              <button
+                className="btn btn-sm btn-primary"
+                onClick={() => {
+                  setShowAutoToast(false)
+                  activeAlerts[0].onAction()
+                }}
+              >
+                {activeAlerts[0].actionText} →
+              </button>
+            )}
+            <button
+              className="btn btn-sm btn-outline"
+              onClick={() => {
+                setShowAutoToast(false)
+                setShowAlertsModal(true)
+              }}
+            >
+              View All ({activeAlerts.length})
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Pop-up Alerts Center Modal */}
+      {showAlertsModal && (
+        <div className="farmer-modal-overlay" onClick={() => setShowAlertsModal(false)}>
+          <div className="farmer-modal" onClick={e => e.stopPropagation()}>
+            <div className="farmer-modal-header">
+              <div>
+                <span className="farmer-modal-tag">Farm Alert Center</span>
+                <h2 className="farmer-modal-title">🔔 Active Farm Alerts ({activeAlerts.length})</h2>
+              </div>
+              <button
+                className="farmer-modal-close"
+                onClick={() => setShowAlertsModal(false)}
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="farmer-modal-body">
+              <div className="alerts-modal-list">
+                {activeAlerts.map(item => (
+                  <div key={item.id} className={`alert-modal-card ${item.level}`}>
+                    <span className="alert-modal-card-icon">{item.icon}</span>
+                    <div className="alert-modal-card-content">
+                      <div className="alert-modal-card-title">{item.title}</div>
+                      <div className="alert-modal-card-msg">{item.message}</div>
+                      {item.onAction && (
+                        <button
+                          className="btn btn-sm btn-primary"
+                          style={{ marginTop: 4 }}
+                          onClick={() => {
+                            setShowAlertsModal(false)
+                            item.onAction()
+                          }}
+                        >
+                          {item.actionText} →
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="farmer-modal-footer">
+                <button
+                  className="btn btn-primary"
+                  onClick={() => setShowAlertsModal(false)}
+                >
+                  ✓ Close Alerts
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
