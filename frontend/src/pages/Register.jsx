@@ -2,10 +2,9 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Eye, EyeOff, Loader2, MapPin, CheckCircle } from 'lucide-react'
 import { registerUser } from '../data/api'
+import { indianStates, crops } from '../data/options'
 import './Auth.css'
 
-const indianStates = ['Punjab','Haryana','Uttar Pradesh','Madhya Pradesh','Maharashtra','Rajasthan','Gujarat','Karnataka','Andhra Pradesh','Telangana','Tamil Nadu','West Bengal','Bihar','Jharkhand','Odisha','Chhattisgarh','Kerala','Assam']
-const crops = ['Wheat (गेहूं)','Rice / Paddy (धान)','Basmati (बासमती)','Sugarcane (गन्ना)','Cotton (कपास)','Soybean (सोयाबीन)','Maize (मक्का)','Pulses (दालें)','Mustard (सरसों)','Potato (आलू)','Onion (प्याज)','Tomato (टमाटर)','Groundnut (मूंगफली)','Banana (केला)','Mango (आम)']
 
 export default function Register({ onLogin }) {
   const [step, setStep] = useState(1)

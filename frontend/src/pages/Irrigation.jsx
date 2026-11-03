@@ -1,37 +1,10 @@
 /* eslint-disable no-unused-vars */
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { MapContainer, TileLayer, Polygon, Popup } from 'react-leaflet'
 import { Droplets, Thermometer, Calendar, Plus, Download, MapPin } from 'lucide-react'
-import { getFarmInfo } from '../data/farm'
-import { FARM_BOUNDARY, buildZones } from './GISMapping'
+import { getFarmInfo, getFieldFeature, getBoundaryCenter } from '../data/farm'
+import { buildZones } from './GISMapping'
 import './Irrigation.css'
-
-// Sample farm coordinates for weather + map (not yet per-farmer)
-const FARM_LAT = 19.4308
-const FARM_LNG = 74.9010
-
-// Farm boundary polygon for map (same as GISMapping)
-// Sample traced boundary (not yet per-farmer)
-// Farm boundary polygon for map
-const farmPolygon = [
-  [19.431147, 74.900480],
-  [19.431153, 74.901019],
-  [19.431138, 74.901906],
-  [19.430525, 74.901972],
-  [19.430661, 74.901574],
-  [19.430316, 74.901609],
-  [19.429984, 74.901629],
-  [19.430051, 74.901130],
-  [19.430128, 74.900718],
-  [19.430202, 74.900242],
-  [19.430285, 74.899713],
-  [19.430611, 74.900040],
-  [19.430935, 74.900324],
-  [19.431147, 74.900480],
-]
-
-// Real zones generated dynamically from farm geometry
-const FARM_ZONES = buildZones(FARM_BOUNDARY)
 
 // Helper to convert GeoJSON polygon coordinates [lng, lat] to Leaflet [lat, lng]
 function geoJsonToLeaflet(feature) {
@@ -43,16 +16,16 @@ function geoJsonToLeaflet(feature) {
 // How often the weather API is refreshed automatically (5 minutes)
 const WEATHER_REFRESH_MS = 5 * 60 * 1000
 
-// Staggered irrigation schedule windows for farm zones
+// DEFAULT irrigation time windows, assigned to zones in order. This is a template, not the farmer's real plan.
 const ZONE_SCHEDULE_CONFIG = [
-  { startHour: 5,  startMin: 0,  endHour: 6,  endMin: 30, blockName: 'North Block' },
+  { startHour: 5,  startMin: 0,  endHour: 6,  endMin: 30 },
   { startHour: 6,  startMin: 30, endHour: 8,  endMin: 0,  blockName: 'North-East Block' },
-  { startHour: 8,  startMin: 0,  endHour: 9,  endMin: 30, blockName: 'Central Block' },
-  { startHour: 15, startMin: 0,  endHour: 16, endMin: 30, blockName: 'Central-West Block' },
+  { startHour: 8,  startMin: 0,  endHour: 9,  endMin: 30 },
+  { startHour: 15, startMin: 0,  endHour: 16, endMin: 30 },
   { startHour: 16, startMin: 30, endHour: 18, endMin: 0,  blockName: 'South Block' },
-  { startHour: 18, startMin: 0,  endHour: 19, endMin: 30, blockName: 'South-East Block' },
+  { startHour: 18, startMin: 0,  endHour: 19, endMin: 30 },
   { startHour: 19, startMin: 30, endHour: 21, endMin: 0,  blockName: 'East Block' },
-  { startHour: 21, startMin: 0,  endHour: 22, endMin: 30, blockName: 'West Block' },
+  { startHour: 21, startMin: 0,  endHour: 22, endMin: 30 },
 ]
 
 // Soil physical profiles: water demand and moisture retention per soil type
@@ -62,7 +35,7 @@ const SOIL_PROFILES = {
   Sandy: { baseWater: 6.2, moistureOffset: -8, drainage: 'Fast drainage, high porosity' },
 }
 
-// Ideal/benchmark values for Co-86032 sugarcane (general growth-stage averages)
+// Reference ranges for sugarcane (general growth-stage averages). Sample values, not specific to the farmer's crop.
 const SUGARCANE_BENCHMARK = {
   soilMoisture: { min: 60, max: 80 },   // %
   temp: { min: 26, max: 34 },           // °C — optimal growth range
@@ -79,7 +52,20 @@ function calcET0(tempC, humidity) {
 }
 
 // Derive live schedule dynamically from real current farm zones, live weather, and soil moisture
-function buildLiveSchedule(weather, satMoisture, zones = FARM_ZONES) {
+// Position of a zone inside its field, e.g. "North-East" or "Central" (derived from the field's own geometry)
+function compassLabel(centroid, center, spread) {
+  const dy = spread.lat ? (centroid[0] - center[0]) / spread.lat : 0
+  const dx = spread.lng ? (centroid[1] - center[1]) / spread.lng : 0
+  const ns = dy > 0.3 ? 'North' : dy < -0.3 ? 'South' : ''
+  const ew = dx > 0.3 ? 'East' : dx < -0.3 ? 'West' : ''
+  return [ns, ew].filter(Boolean).join('-') || 'Central'
+}
+
+function buildLiveSchedule(weather, satMoisture, zones, center, crop) {
+  const spread = {
+    lat: Math.max(0, ...zones.map(z => Math.abs(z.centroid[0] - center[0]))),
+    lng: Math.max(0, ...zones.map(z => Math.abs(z.centroid[1] - center[1]))),
+  }
   const now = new Date()
   const currentHour = now.getHours()
   const currentMin = now.getMinutes()
@@ -90,12 +76,14 @@ function buildLiveSchedule(weather, satMoisture, zones = FARM_ZONES) {
   const humidity = weather?.humidity ?? 65
   const et0 = calcET0(temp, humidity)
 
-  // Satellite or live model moisture baseline
+  // Satellite moisture when available; otherwise a generic 58% placeholder that is flagged as estimated
   const baseSat = satMoisture ? satMoisture.surfacePct : 58
 
   return zones.map((z, idx) => {
     const slot = ZONE_SCHEDULE_CONFIG[idx % ZONE_SCHEDULE_CONFIG.length]
+    const blockName = `${compassLabel(z.centroid, center, spread)} Block`
     const profile = SOIL_PROFILES[z.soil] || SOIL_PROFILES.Loam
+    const soilName = z.soil ? `${z.soil} soil` : 'default loam profile (soil type not measured)'
     const startDecimal = slot.startHour + slot.startMin / 60
     const endDecimal = slot.endHour + slot.endMin / 60
 
@@ -118,7 +106,7 @@ function buildLiveSchedule(weather, satMoisture, zones = FARM_ZONES) {
     } else if (liveMoisture < 35 && rain < 1) {
       status = 'Drought Risk'
       color = '#f97316'
-      note = `${z.soil} soil critically dry (${liveMoisture}%). ET₀ = ${et0.toFixed(1)} mm/day. Immediate hydration required.`
+      note = `${soilName} critically dry (${liveMoisture}%). ET₀ = ${et0.toFixed(1)} mm/day. Immediate hydration required.`
     } else if (nowDecimal >= endDecimal) {
       status = 'Complete'
       color = '#22c55e'
@@ -128,20 +116,21 @@ function buildLiveSchedule(weather, satMoisture, zones = FARM_ZONES) {
     } else if (nowDecimal >= startDecimal) {
       status = 'In Progress'
       color = '#06b6d4'
-      note = `Active drip cycle running. Flow calibrated for ${z.soil} soil percolation.`
+      note = `Active drip cycle running. Flow calibrated for ${soilName} percolation.`
     } else {
       status = 'Scheduled'
       color = '#3b82f6'
       note = temp > 35
-        ? `High temp (${temp}°C) — demand increased by ${Math.round((tempFactor - 1) * 100)}% for ${slot.blockName}.`
-        : `On schedule. Calibrated for ${z.soil} soil (${profile.drainage}).`
+        ? `High temp (${temp}°C) — demand increased by ${Math.round((tempFactor - 1) * 100)}% for ${blockName}.`
+        : `On schedule. Calibrated for ${soilName} (${profile.drainage}).`
     }
 
     return {
       id: z.id,
       zoneNumber: z.id + 1,
-      zoneName: `Zone ${z.id + 1} (${slot.blockName})`,
-      crop: 'ऊस (Sugarcane Co-86032)',
+      zoneName: `Zone ${z.id + 1} (${blockName})`,
+      crop: crop || 'Crop not set',
+      moistureEstimated: !satMoisture,
       soil: z.soil,
       areaHa: z.areaHa,
       ndvi: z.ndvi,
@@ -303,9 +292,14 @@ function formatTime(date) {
 
 const DAY_LABELS = ['Today', 'Tomorrow', 'Day 3', 'Day 4', 'Day 5']
 
-export default function Irrigation({ user }) {
-  const farm = getFarmInfo(user)
-  const FARM_NAME = [farm.farmName, farm.location].filter(Boolean).join(', ')
+export default function Irrigation({ user, field }) {
+  const farm = getFarmInfo(user, field)
+  const FARM_NAME = [farm.farmName, farm.fieldName, farm.location].filter(Boolean).join(', ')
+  // Outline, zones and weather/satellite coordinates all come from the farmer's saved boundary
+  const boundary = useMemo(() => getFieldFeature(field), [field])
+  const farmZones = useMemo(() => buildZones(boundary), [boundary])
+  const [FARM_LAT, FARM_LNG] = useMemo(() => getBoundaryCenter(boundary), [boundary])
+  const farmPolygon = useMemo(() => geoJsonToLeaflet(boundary), [boundary])
   const [activeTab, setActiveTab] = useState('schedule')
   const [forecast, setForecast] = useState(null)
   const [weatherLoading, setWeatherLoading] = useState(false)
@@ -396,7 +390,7 @@ export default function Irrigation({ user }) {
     }
   }
 
-  const liveSchedule = buildLiveSchedule(currentWeather, satMoisture)
+  const liveSchedule = buildLiveSchedule(currentWeather, satMoisture, farmZones, [FARM_LAT, FARM_LNG], farm.crop)
 
   // Average soil moisture across scheduled blocks (replaces the old sensor-derived figure)
   const avgMoisture = Math.round(
@@ -415,6 +409,7 @@ export default function Irrigation({ user }) {
         <div>
           <h1 className="dash-title">💧 Smart Irrigation Planning</h1>
           <p className="dash-sub">Real-time precision water management · {FARM_NAME}</p>
+          <p className="dash-sub" style={{ fontSize: 11 }}>Zones are generated from the boundary of your field. Irrigation time windows are a default template, and soil type is not measured, so a default loam profile is used. Moisture is estimated unless satellite data is available.</p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <div className="badge badge-green pulse"><span className="dot dot-green"></span> System Optimized</div>
@@ -439,7 +434,7 @@ export default function Irrigation({ user }) {
             sub: satMoisture
               ? `${satMoisture.source} · as of ${satMoisture.date.slice(0,4)}-${satMoisture.date.slice(4,6)}-${satMoisture.date.slice(6,8)}`
               : satMoistureLoading ? 'Fetching soil moisture reading...' : 'Using field estimates (satellite unavailable)',
-            color: 'var(--teal)', badge: satMoisture ? 'LIVE' : 'AI INSIGHT'
+            color: 'var(--teal)', badge: satMoisture ? 'LIVE' : 'ESTIMATED'
           },
           {
             label: 'Field Temperature',
@@ -485,7 +480,7 @@ export default function Irrigation({ user }) {
         <div className="irr-map-col">
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div className="irr-map-header">
-              <div className="irr-map-title">Mote Patil Farm – {liveSchedule.length} Zones Live Irrigation View</div>
+              <div className="irr-map-title">{farm.farmName}{farm.fieldName ? ` · ${farm.fieldName}` : ''} – {liveSchedule.length} Zones Irrigation View</div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <div className="irr-legend-item" style={{ color: '#22c55e' }}>🟢 Complete</div>
                 <div className="irr-legend-item" style={{ color: '#06b6d4' }}>💠 In Progress</div>
@@ -493,7 +488,7 @@ export default function Irrigation({ user }) {
                 <div className="irr-legend-item" style={{ color: '#f97316' }}>🟠 Drought Risk</div>
               </div>
             </div>
-            <MapContainer center={[FARM_LAT, FARM_LNG]} zoom={15} style={{ height: '340px' }}>
+            <MapContainer bounds={farmPolygon} boundsOptions={{ padding: [20, 20] }} maxZoom={19} style={{ height: '340px' }}>
               <TileLayer
                 url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
                 attribution="Tiles © Esri"
@@ -533,12 +528,12 @@ export default function Irrigation({ user }) {
                         <div style={{ fontWeight: 800, fontSize: 13, color: 'var(--green-accent)', marginBottom: 2 }}>
                           {s.zoneName}
                         </div>
-                        <div><strong>Soil Type:</strong> {s.soil} Soil</div>
+                        <div><strong>Soil Type:</strong> {s.soil ? `${s.soil} Soil` : 'Not measured (default loam profile used)'}</div>
                         <div><strong>Zone Area:</strong> {s.areaHa} Ha</div>
                         <div><strong>Status:</strong> {s.status}</div>
                         <div><strong>Irrigation Window:</strong> {s.time}</div>
                         <div><strong>Water Allocation:</strong> {s.water}</div>
-                        <div><strong>Soil Moisture:</strong> {s.moisture}%</div>
+                        <div><strong>Soil Moisture:</strong> {s.moisture}%{s.moistureEstimated ? ' (estimated)' : ''}</div>
                       </div>
                     </Popup>
                   </Polygon>
@@ -597,7 +592,7 @@ export default function Irrigation({ user }) {
                     <div className="schedule-crop" style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                       <span>{s.crop}</span>
                       <span className="badge" style={{ background: 'var(--bg-card2)', color: 'var(--text-secondary)', border: '1px solid var(--border)', fontSize: 10 }}>
-                        {s.soil} Soil • {s.areaHa} Ha
+                        {s.soil ? `${s.soil} Soil` : 'Soil not measured'} • {s.areaHa} Ha
                       </span>
                     </div>
                     <div className="schedule-meta">
@@ -619,7 +614,7 @@ export default function Irrigation({ user }) {
                       />
                     </div>
                     <div className="text-sm text-muted" style={{ marginTop: 3 }}>
-                      Soil Moisture: <strong>{s.moisture}%</strong> {s.moisture < 35 ? '⚠️ Low' : s.moisture > 80 ? '💧 Saturated' : '✅ Optimal'}
+                      Soil Moisture: <strong>{s.moisture}%{s.moistureEstimated ? ' (est.)' : ''}</strong> {s.moisture < 35 ? '⚠️ Low' : s.moisture > 80 ? '💧 Saturated' : '✅ Optimal'}
                     </div>
                   </div>
                 )
@@ -728,7 +723,7 @@ export default function Irrigation({ user }) {
                 <>
                   <div className="benchmark-score-banner">
                     <div className="benchmark-score-val">{benchmarkData.overallScore}%</div>
-                    <div className="benchmark-score-label">Aligned with Co-86032 Sugarcane Benchmark</div>
+                    <div className="benchmark-score-label">Aligned with Sugarcane Reference Ranges (sample values{farm.crop && !/sugarcane/i.test(farm.crop) ? `, not specific to ${farm.crop}` : ''})</div>
                   </div>
                   {benchmarkData.checks.map((c, i) => (
                     <div key={i} className="benchmark-row">

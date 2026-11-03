@@ -15,6 +15,7 @@ Creates agri_forum.db (SQLite file) in this folder on first run, with
 seed categories + a demo user + demo posts.
 """
 
+import json
 import os
 import re
 from datetime import timedelta
@@ -24,9 +25,10 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import (
     JWTManager, create_access_token, jwt_required, get_jwt_identity
 )
-from sqlalchemy import func
+from sqlalchemy import func, inspect, text, UniqueConstraint
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
+from farm_geometry import validate_polygon
 from datetime import datetime
 
 app = Flask(__name__)
@@ -51,11 +53,21 @@ class User(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     profile = db.relationship('FarmerProfile', uselist=False, back_populates='user')
+    fields = db.relationship('Field', order_by='Field.id', back_populates='user')
+
+    @property
+    def mapping_complete(self):
+        # A farm counts as mapped once the farmer has at least one field (or a legacy boundary).
+        return bool(self.fields or (self.profile and self.profile.farm_boundary))
 
     def to_dict(self):
         return {
             "id": self.id, "name": self.name, "email": self.email, "role": self.role,
             "profile": self.profile.to_dict() if self.profile else None,
+            "mappingComplete": self.mapping_complete,
+            # The first field is the "primary" one; it is mirrored into profile.farm_boundary
+            # so the original single-boundary API keeps working.
+            "fields": [f.to_dict(is_primary=(i == 0)) for i, f in enumerate(self.fields)],
         }
 
 
@@ -70,6 +82,8 @@ class FarmerProfile(db.Model):
     primary_crop = db.Column(db.String(60))
     land_acres = db.Column(db.Float)
     field_id = db.Column(db.String(40), unique=True)
+    farm_boundary = db.Column(db.Text)  # GeoJSON Polygon as JSON text; NULL until the farmer maps the farm
+    boundary_updated_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -80,6 +94,33 @@ class FarmerProfile(db.Model):
             "phone": self.phone, "farmName": self.farm_name, "state": self.state,
             "district": self.district, "primaryCrop": self.primary_crop,
             "landAcres": self.land_acres, "fieldId": self.field_id,
+            "farmBoundary": json.loads(self.farm_boundary) if self.farm_boundary else None,
+            "mappingComplete": bool(self.farm_boundary),
+        }
+
+
+MAX_FIELDS_PER_FARMER = 20
+
+
+class Field(db.Model):
+    """One mapped field (plot) belonging to a farmer."""
+    __tablename__ = 'farm_field'
+    __table_args__ = (UniqueConstraint('user_id', 'name', name='uq_farm_field_user_name'),)
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    name = db.Column(db.String(100), nullable=False)
+    boundary = db.Column(db.Text, nullable=False)  # GeoJSON Polygon as JSON text
+    area_ha = db.Column(db.Float)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = db.relationship('User', back_populates='fields')
+
+    def to_dict(self, is_primary=False):
+        return {
+            "id": self.id, "name": self.name, "boundary": json.loads(self.boundary),
+            "areaHectares": self.area_ha, "isPrimary": is_primary,
+            "createdAt": self.created_at.isoformat() if self.created_at else None,
         }
 
 
@@ -166,6 +207,50 @@ DEFAULT_CATEGORIES = [
 ]
 
 
+def ensure_schema():
+    """
+    Add columns introduced after a table was first created. db.create_all() only
+    creates missing tables, so existing databases need this. It only ever adds
+    nullable columns; it never drops or rewrites data.
+    """
+    insp = inspect(db.engine)
+    if 'farmer_profile' not in insp.get_table_names():
+        return
+    existing = {c['name'] for c in insp.get_columns('farmer_profile')}
+    wanted = {'farm_boundary': 'TEXT', 'boundary_updated_at': 'DATETIME'}
+    with db.engine.begin() as conn:
+        for name, sql_type in wanted.items():
+            if name not in existing:
+                conn.execute(text(f'ALTER TABLE farmer_profile ADD COLUMN {name} {sql_type}'))
+
+
+DEFAULT_FIELD_NAME = 'Main field'
+
+
+def backfill_fields():
+    """
+    Turn each existing single farm boundary into that farmer's first field.
+    Repeatable: only farmers with no field yet are touched, and nothing is deleted or overwritten.
+    """
+    changed = False
+    for profile in FarmerProfile.query.filter(FarmerProfile.farm_boundary.isnot(None)).all():
+        if Field.query.filter_by(user_id=profile.user_id).first():
+            continue
+        _, area_ha, _ = validate_polygon(json.loads(profile.farm_boundary))
+        db.session.add(Field(user_id=profile.user_id, name=DEFAULT_FIELD_NAME,
+                             boundary=profile.farm_boundary, area_ha=area_ha))
+        changed = True
+    if changed:
+        db.session.commit()
+
+
+def init_db():
+    db.create_all()
+    ensure_schema()
+    backfill_fields()
+    seed()
+
+
 def seed():
     if Category.query.count() == 0:
         for cid, name, desc in DEFAULT_CATEGORIES:
@@ -201,6 +286,12 @@ MIN_PASSWORD_LEN = 6
 
 def _clean_str(value, max_len):
     return value.strip()[:max_len] if isinstance(value, str) and value.strip() else None
+
+
+PROFILE_KEYS = {  # db column -> request key
+    "phone": "phone", "farm_name": "farmName", "state": "state", "district": "district",
+    "primary_crop": "primaryCrop", "land_acres": "landAcres",
+}
 
 
 def parse_profile(data):
@@ -285,30 +376,206 @@ def me():
 # ---------------------------------------------------------------- Profile --
 # Both endpoints act only on the user in the JWT; no user id is accepted from the client.
 
+def get_or_create_profile(user):
+    if user.profile is None:
+        user.profile = FarmerProfile(user_id=user.id, field_id=f"FU-{user.id:04d}")
+    return user.profile
+
+
+def _boundary_payload(profile):
+    boundary = json.loads(profile.farm_boundary) if profile and profile.farm_boundary else None
+    area = None
+    if boundary:
+        _, area, _ = validate_polygon(boundary)
+    return {"mapped": boundary is not None, "boundary": boundary, "areaHectares": area}
+
+
+def _current_user():
+    return db.session.get(User, int(get_jwt_identity()))
+
+
+def _sync_primary_boundary(user):
+    """Keep profile.farm_boundary equal to the first field's boundary (legacy single-boundary API)."""
+    primary = user.fields[0] if user.fields else None
+    if primary is None:
+        return
+    profile = get_or_create_profile(user)
+    profile.farm_boundary = primary.boundary
+    profile.boundary_updated_at = datetime.utcnow()
+
+
+def _name_taken(user_id, name, exclude_id=None):
+    q = Field.query.filter(Field.user_id == user_id, func.lower(Field.name) == name.lower())
+    if exclude_id is not None:
+        q = q.filter(Field.id != exclude_id)
+    return q.first() is not None
+
+
+def _read_boundary(data):
+    boundary = data.get('boundary')
+    if isinstance(boundary, dict) and boundary.get('type') == 'Feature':
+        boundary = boundary.get('geometry')
+    return validate_polygon(boundary)
+
+
+@app.route('/farmer/mapping-status', methods=['GET'])
+@jwt_required()
+def mapping_status():
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    return jsonify({"mapped": user.mapping_complete})
+
+
+@app.route('/farmer/farm-boundary', methods=['GET'])
+@jwt_required()
+def get_farm_boundary():
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    return jsonify(_boundary_payload(user.profile))
+
+
+@app.route('/farmer/farm-boundary', methods=['PUT'])
+@jwt_required()
+def save_farm_boundary():
+    """Original single-boundary API. It edits the farmer's primary (first) field, creating it if needed."""
+    user = _current_user()  # ownership comes from the JWT only; any user id in the body is ignored
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    geometry, area_ha, err = _read_boundary(request.get_json(silent=True) or {})
+    if err:
+        return jsonify({"error": err}), 400
+    if user.fields:
+        primary = user.fields[0]
+        primary.boundary, primary.area_ha = json.dumps(geometry), area_ha
+    else:
+        db.session.add(Field(user_id=user.id, name=DEFAULT_FIELD_NAME, boundary=json.dumps(geometry), area_ha=area_ha))
+        db.session.flush()
+        db.session.refresh(user)
+    _sync_primary_boundary(user)
+    db.session.commit()
+    return jsonify({**_boundary_payload(user.profile), "user": user.to_dict()})
+
+
+# ---- Fields (multiple mapped plots per farmer) ----
+
+@app.route('/farmer/fields', methods=['GET'])
+@jwt_required()
+def list_fields():
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    return jsonify({"fields": user.to_dict()["fields"]})
+
+
+@app.route('/farmer/fields', methods=['POST'])
+@jwt_required()
+def create_field():
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    data = request.get_json(silent=True) or {}
+    name = _clean_str(data.get('name'), 100)
+    if not name:
+        return jsonify({"error": "Give this field a name"}), 400
+    geometry, area_ha, err = _read_boundary(data)
+    if err:
+        return jsonify({"error": err}), 400
+    if len(user.fields) >= MAX_FIELDS_PER_FARMER:
+        return jsonify({"error": f"You can save up to {MAX_FIELDS_PER_FARMER} fields"}), 400
+    if _name_taken(user.id, name):
+        return jsonify({"error": "You already have a field with this name"}), 409
+    field = Field(user_id=user.id, name=name, boundary=json.dumps(geometry), area_ha=area_ha)
+    db.session.add(field)
+    try:
+        db.session.flush()
+        db.session.refresh(user)
+        _sync_primary_boundary(user)  # only changes anything for the very first field
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"error": "You already have a field with this name"}), 409
+    return jsonify({"field": field.to_dict(is_primary=user.fields[0].id == field.id), "user": user.to_dict()}), 201
+
+
+def _own_field(user, field_id):
+    # Looked up by id AND owner, so another farmer's field is indistinguishable from a missing one.
+    return Field.query.filter_by(id=field_id, user_id=user.id).first()
+
+
+@app.route('/farmer/fields/<int:field_id>', methods=['GET'])
+@jwt_required()
+def get_field(field_id):
+    user = _current_user()
+    field = _own_field(user, field_id) if user else None
+    if not field:
+        return jsonify({"error": "Field not found"}), 404
+    return jsonify({"field": field.to_dict(is_primary=user.fields[0].id == field.id)})
+
+
+@app.route('/farmer/fields/<int:field_id>', methods=['PUT'])
+@jwt_required()
+def update_field(field_id):
+    user = _current_user()
+    field = _own_field(user, field_id) if user else None
+    if not field:
+        return jsonify({"error": "Field not found"}), 404
+    data = request.get_json(silent=True) or {}
+    if 'name' in data:
+        name = _clean_str(data.get('name'), 100)
+        if not name:
+            return jsonify({"error": "Give this field a name"}), 400
+        if _name_taken(user.id, name, exclude_id=field.id):
+            return jsonify({"error": "You already have a field with this name"}), 409
+        field.name = name
+    if 'boundary' in data:
+        geometry, area_ha, err = _read_boundary(data)
+        if err:
+            return jsonify({"error": err}), 400
+        field.boundary, field.area_ha = json.dumps(geometry), area_ha
+    if user.fields and user.fields[0].id == field.id:
+        _sync_primary_boundary(user)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"error": "You already have a field with this name"}), 409
+    return jsonify({"field": field.to_dict(is_primary=user.fields[0].id == field.id), "user": user.to_dict()})
+
+
 @app.route('/farmer/profile', methods=['GET'])
 @jwt_required()
 def get_profile():
-    user = db.session.get(User, int(get_jwt_identity()))
+    user = _current_user()
     if not user:
         return jsonify({"error": "User not found"}), 404
-    return jsonify({"profile": user.profile.to_dict() if user.profile else None})
+    return jsonify({"name": user.name, "email": user.email,
+                    "profile": user.profile.to_dict() if user.profile else None})
 
 
 @app.route('/farmer/profile', methods=['PUT'])
 @jwt_required()
 def update_profile():
-    user = db.session.get(User, int(get_jwt_identity()))
+    """Partial update: only the keys present in the request change. `name` lives on the user row."""
+    user = _current_user()
     if not user:
         return jsonify({"error": "User not found"}), 404
-    fields, err = parse_profile(request.get_json(silent=True) or {})
+    data = request.get_json(silent=True) or {}
+    if 'name' in data:
+        name = _clean_str(data.get('name'), 100)
+        if not name:
+            return jsonify({"error": "Name cannot be empty"}), 400
+        user.name = name
+    fields, err = parse_profile(data)
     if err:
         return jsonify({"error": err}), 400
-    if user.profile is None:
-        user.profile = FarmerProfile(user_id=user.id, field_id=f"FU-{user.id:04d}")
-    for key, value in fields.items():
-        setattr(user.profile, key, value)
+    profile = get_or_create_profile(user)
+    for column, key in PROFILE_KEYS.items():
+        if key in data:
+            setattr(profile, column, fields[column])
     db.session.commit()
-    return jsonify({"profile": user.profile.to_dict()})
+    return jsonify({"name": user.name, "profile": profile.to_dict(), "user": user.to_dict()})
 
 
 # ----------------------------------------------------------------- Forum --
@@ -474,6 +741,5 @@ def send_chat_message():
 
 if __name__ == '__main__':
     with app.app_context():
-        db.create_all()
-        seed()
+        init_db()
     app.run(debug=False, port=5001)

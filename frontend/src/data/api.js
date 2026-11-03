@@ -55,6 +55,29 @@ export function fetchFarmerProfile() {
   return request('/farmer/profile', { auth: true })
 }
 
+// Partial update: only the keys you pass change. Resolves to { name, profile, user }.
+export function updateProfile(changes) {
+  return request('/farmer/profile', { method: 'PUT', auth: true, body: changes })
+}
+
+// Fields (plots). Both resolve to { field, user }; `user` carries the refreshed fields list.
+export function createField({ name, boundary }) {
+  return request('/farmer/fields', { method: 'POST', auth: true, body: { name, boundary } })
+}
+
+export function updateField(id, changes) {
+  return request(`/farmer/fields/${id}`, { method: 'PUT', auth: true, body: changes })
+}
+
+export function fetchFarmBoundary() {
+  return request('/farmer/farm-boundary', { auth: true })
+}
+
+// boundary: GeoJSON Polygon. Resolves to { boundary, areaHectares, user } where user has mappingComplete.
+export function saveFarmBoundary(boundary) {
+  return request('/farmer/farm-boundary', { method: 'PUT', auth: true, body: { boundary } })
+}
+
 // ---- Forum ---------------------------------------------------------------
 export function getCategories() {
   return request('/forum/categories')

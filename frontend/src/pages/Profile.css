@@ -1,0 +1,5 @@
+.profile-card { max-width: 560px; width: calc(100% - 32px); margin: 24px auto; padding: 24px; display: flex; flex-direction: column; gap: 14px; }
+.profile-card label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--text-secondary); }
+.profile-card .input:disabled { opacity: 0.6; cursor: not-allowed; }
+.profile-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 600px) { .profile-grid { grid-template-columns: 1fr; } }

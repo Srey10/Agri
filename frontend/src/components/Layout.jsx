@@ -71,9 +71,11 @@ const languages = [
   }
 ]
 
-export default function Layout({ user, onLogout }) {
+export default function Layout({ user, activeFieldId, onSelectField, onLogout }) {
   const navigate = useNavigate()
-  const farm = getFarmInfo(user)
+  const fields = user.fields || []
+  const activeField = fields.find(f => f.id === activeFieldId) || null
+  const farm = getFarmInfo(user, activeField)
 
   const [notifications] = useState(3)
 
@@ -150,7 +152,7 @@ export default function Layout({ user, onLogout }) {
             </div>
 
             <div className="user-role">
-              Digital Agronomist
+              {user.role === 'admin' ? 'Admin' : 'Farmer'}
             </div>
 
           </div>
@@ -160,14 +162,27 @@ export default function Layout({ user, onLogout }) {
         <div className="sidebar-field">
 
           <div className="field-label">
-            Field Unit
+            {farm.farmName}
           </div>
 
-          <div className="field-id">
-            {farm.hasProfile
-              ? [farm.fieldId, farm.farmName].filter(Boolean).join(' • ')
-              : 'Farm profile not set up'}
-          </div>
+          <select
+            className="field-select"
+            aria-label="Select field"
+            value={activeFieldId ?? ''}
+            onChange={e => { onSelectField(Number(e.target.value)); setSidebarOpen(false) }}
+          >
+            {fields.map(f => (
+              <option key={f.id} value={f.id}>
+                {f.name}{f.areaHectares != null ? ` · ${f.areaHectares.toFixed(2)} ha` : ''}
+              </option>
+            ))}
+          </select>
+
+          {farm.fieldId && (
+            <div className="field-id">
+              ID {farm.fieldId} · {fields.length} {fields.length === 1 ? 'field' : 'fields'}
+            </div>
+          )}
 
         </div>
 
@@ -207,6 +222,7 @@ export default function Layout({ user, onLogout }) {
               width: '100%',
               justifyContent: 'center'
             }}
+            onClick={() => { setSidebarOpen(false); navigate('/farm-mapping?new=1') }}
           >
             <Plus size={16} />
 
@@ -220,10 +236,11 @@ export default function Layout({ user, onLogout }) {
               style={{
                 width: '100%'
               }}
+              onClick={() => { setSidebarOpen(false); navigate('/profile') }}
             >
               <Settings size={15} />
 
-              Settings
+              Profile & Settings
             </button>
 
             <button
@@ -297,7 +314,7 @@ export default function Layout({ user, onLogout }) {
 
               <input
                 className="search-input"
-                placeholder="Search Field ID (e.g. F-402)..."
+                placeholder="Search..."
               />
 
             </div>
@@ -382,7 +399,7 @@ export default function Layout({ user, onLogout }) {
             >
 
               <div className="user-avatar">
-                {user.name?.[0]?.toUpperCase() || 'A'}
+                {user.name?.[0]?.toUpperCase() || '?'}
               </div>
 
 
@@ -404,6 +421,17 @@ export default function Layout({ user, onLogout }) {
                       margin: '8px 0'
                     }}
                   />
+
+                  <div
+                    className="user-dropdown-item"
+                    onClick={() => navigate('/profile')}
+                  >
+
+                    <Settings size={13} />
+
+                    Profile
+
+                  </div>
 
                   <div
                     className="user-dropdown-item"
