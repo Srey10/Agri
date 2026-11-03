@@ -48,9 +48,12 @@ export default function Forum({ user }) {
           <h1>Community Forum</h1>
           <p className="forum-subtitle">Ask questions, share what's working in your fields, learn from other farmers.</p>
         </div>
-        <button className="btn-primary" onClick={() => setShowCreate(true)}>
-          <Plus size={16} /> New Discussion
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Link to="/forum/chat" className="btn-outline" style={{ textDecoration: 'none' }}>💬 Quick Chat</Link>
+          <button className="btn-primary" onClick={() => setShowCreate(true)}>
+            <Plus size={16} /> New Discussion
+          </button>
+        </div>
       </div>
 
       <div className="forum-toolbar">

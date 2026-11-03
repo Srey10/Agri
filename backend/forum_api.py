@@ -680,6 +680,64 @@ def report_post(post_id):
     db.session.commit()
     return jsonify({"status": "reported"}), 201
 
+import time
+from threading import Lock
+
+# ---- Quick Chat: kept in memory, resets when the server restarts ----
+CHAT_MESSAGES = []
+CHAT_LOCK = Lock()
+CHAT_NEXT_ID = int(time.time() * 1000)
+
+from datetime import timedelta
+
+def _seed_chat():
+    now = datetime.utcnow()
+    samples = [
+        (-1, "Ramesh Patil", "Good morning everyone! Anyone else seeing yellow leaves on sugarcane this week?", 95),
+        (-2, "Sunita Jadhav", "Yes, I had the same in my north field. Turned out to be low nitrogen.", 88),
+        (-3, "Anil Deshmukh", "How much urea did you apply, Sunita?", 80),
+        (-2, "Sunita Jadhav", "About 50 kg per acre, and I saw a difference in 10 days.", 74),
+        (-4, "Priya Kulkarni", "Don't forget to check drip lines. Mine were clogged after the rain.", 51),
+        (-1, "Ramesh Patil", "Good tip Priya. Is anyone selling used drip pipes nearby?", 33),
+        (-3, "Anil Deshmukh", "I have some spare. Message me and we can sort it out.", 20),
+    ]
+    for i, (author_id, name, text, mins_ago) in enumerate(samples, start=1):
+        CHAT_MESSAGES.append({
+            "id": i, "authorId": author_id, "authorName": name, "content": text,
+            "createdAt": (now - timedelta(minutes=mins_ago)).isoformat(),
+        })
+
+_seed_chat()
+
+@app.route('/chat/messages', methods=['GET'])
+@jwt_required()
+def get_chat_messages():
+    after = request.args.get('after', 0, type=int)
+    with CHAT_LOCK:
+        msgs = [m for m in CHAT_MESSAGES if m['id'] > after]
+    return jsonify(msgs if after else msgs[-50:])
+
+
+@app.route('/chat/messages', methods=['POST'])
+@jwt_required()
+def send_chat_message():
+    global CHAT_NEXT_ID
+    data = request.get_json() or {}
+    text = (data.get('content') or '').strip()
+    if not text:
+        return jsonify({"error": "Message cannot be empty"}), 400
+    user = db.session.get(User, int(get_jwt_identity()))
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    with CHAT_LOCK:
+        msg = {
+            "id": CHAT_NEXT_ID, "authorId": user.id, "authorName": user.name,
+            "content": text[:500], "createdAt": datetime.utcnow().isoformat(),
+        }
+        CHAT_NEXT_ID += 1
+        CHAT_MESSAGES.append(msg)
+        del CHAT_MESSAGES[:-200]
+    return jsonify(msg), 201
 
 if __name__ == '__main__':
     with app.app_context():

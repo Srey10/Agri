@@ -110,3 +110,11 @@ export function toggleLike(postId) {
 export function reportItem(postId, { type, targetId, reason }) {
   return request(`/forum/posts/${postId}/report`, { method: 'POST', auth: true, body: { type, targetId, reason } })
 }
+
+// ---- Quick Chat ----------------------------------------------------------
+export function getChatMessages(after = 0) {
+  return request(`/chat/messages?after=${after}`, { auth: true })
+}
+export function sendChatMessage(content) {
+  return request('/chat/messages', { method: 'POST', auth: true, body: { content } })
+}

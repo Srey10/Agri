@@ -14,12 +14,14 @@ import Profile from './pages/Profile'
 import Layout from './components/Layout'
 import { getToken, clearToken, fetchCurrentUser } from './data/api'
 import { pickActiveFieldId, rememberActiveFieldId } from './data/farm'
+import ChatRoom from './pages/ChatRoom'
 
 // Remount the mapping page when switching between "add field" and "edit field" (?new=1 / ?field=<id>)
 function FarmMappingRoute(props) {
   const { search } = useLocation()
   return <FarmMapping key={search} {...props} />
 }
+
 
 function App() {
   // The user always comes from the backend (/auth/me, via the JWT), never from
@@ -97,6 +99,7 @@ function App() {
           <Route path="irrigation" element={<Irrigation key={fieldKey} user={user} field={activeField} />} />
           <Route path="knowledge" element={<KnowledgeHub user={user} />} />
           <Route path="crop-disease" element={<CropDisease user={user} field={activeField} />} />
+          <Route path="forum/chat" element={<ChatRoom user={user} />} />
           <Route path="forum" element={<Forum user={user} />} />
           <Route path="forum/:id" element={<ForumPost user={user} />} />
         </Route>
