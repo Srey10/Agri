@@ -11,6 +11,7 @@ import Forum from './pages/Forum'
 import ForumPost from './pages/ForumPost'
 import Layout from './components/Layout'
 import { getToken, clearToken, fetchCurrentUser } from './data/api'
+import ChatRoom from './pages/ChatRoom'
 
 function App() {
   // The user always comes from the backend (/auth/me, via the JWT), never from
@@ -48,6 +49,7 @@ function App() {
           <Route path="irrigation" element={<Irrigation user={user} />} />
           <Route path="knowledge" element={<KnowledgeHub user={user} />} />
           <Route path="crop-disease" element={<CropDisease user={user} />} />
+          <Route path="forum/chat" element={<ChatRoom user={user} />} />          
           <Route path="forum" element={<Forum user={user} />} />
           <Route path="forum/:id" element={<ForumPost user={user} />} />
         </Route>
