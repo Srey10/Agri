@@ -15,6 +15,8 @@ Creates agri_forum.db (SQLite file) in this folder on first run, with
 seed categories + a demo user + demo posts.
 """
 
+import os
+import re
 from datetime import timedelta
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -22,15 +24,17 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import (
     JWTManager, create_access_token, jwt_required, get_jwt_identity
 )
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 
 app = Flask(__name__)
 CORS(app)
 
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///agri_forum.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///agri_forum.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['JWT_SECRET_KEY'] = 'dev-secret-change-in-production'
+app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'dev-secret-change-in-production')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=7)
 
 db = SQLAlchemy(app)
@@ -46,8 +50,37 @@ class User(db.Model):
     role = db.Column(db.String(20), default='user')  # 'user' | 'admin'
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    profile = db.relationship('FarmerProfile', uselist=False, back_populates='user')
+
     def to_dict(self):
-        return {"id": self.id, "name": self.name, "email": self.email, "role": self.role}
+        return {
+            "id": self.id, "name": self.name, "email": self.email, "role": self.role,
+            "profile": self.profile.to_dict() if self.profile else None,
+        }
+
+
+class FarmerProfile(db.Model):
+    """Farm details for a user. One row per user, keyed on the same user.id the forum uses."""
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), unique=True, nullable=False)
+    phone = db.Column(db.String(20))
+    farm_name = db.Column(db.String(120))
+    state = db.Column(db.String(60))
+    district = db.Column(db.String(80))
+    primary_crop = db.Column(db.String(60))
+    land_acres = db.Column(db.Float)
+    field_id = db.Column(db.String(40), unique=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = db.relationship('User', back_populates='profile')
+
+    def to_dict(self):
+        return {
+            "phone": self.phone, "farmName": self.farm_name, "state": self.state,
+            "district": self.district, "primaryCrop": self.primary_crop,
+            "landAcres": self.land_acres, "fieldId": self.field_id,
+        }
 
 
 class Category(db.Model):
@@ -161,27 +194,80 @@ def seed():
 
 # ------------------------------------------------------------------ Auth --
 
+EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+PHONE_RE = re.compile(r'^\+?[0-9][0-9 \-]{6,18}$')
+MIN_PASSWORD_LEN = 6
+
+
+def _clean_str(value, max_len):
+    return value.strip()[:max_len] if isinstance(value, str) and value.strip() else None
+
+
+def parse_profile(data):
+    """Validate the optional farm-detail fields. Returns (fields, error)."""
+    fields = {
+        "phone": _clean_str(data.get('phone'), 20),
+        "farm_name": _clean_str(data.get('farmName'), 120),
+        "state": _clean_str(data.get('state'), 60),
+        "district": _clean_str(data.get('district'), 80),
+        "primary_crop": _clean_str(data.get('primaryCrop'), 60),
+        "land_acres": None,
+    }
+    if fields["phone"] and not PHONE_RE.match(fields["phone"]):
+        return None, "Enter a valid mobile number"
+    acres = data.get('landAcres')
+    if acres not in (None, ''):
+        try:
+            acres = float(acres)
+        except (TypeError, ValueError):
+            return None, "Land size must be a number"
+        if not 0 < acres <= 100000:
+            return None, "Land size must be greater than 0"
+        fields["land_acres"] = acres
+    return fields, None
+
+
 @app.route('/auth/register', methods=['POST'])
 def register():
-    data = request.get_json() or {}
-    name, email, password = data.get('name'), data.get('email'), data.get('password')
+    data = request.get_json(silent=True) or {}
+    name = _clean_str(data.get('name'), 100)
+    email = _clean_str(data.get('email'), 150)
+    password = data.get('password')
     if not name or not email or not password:
         return jsonify({"error": "name, email, and password are required"}), 400
-    if User.query.filter_by(email=email).first():
+    email = email.lower()
+    if not EMAIL_RE.match(email):
+        return jsonify({"error": "Enter a valid email address"}), 400
+    if not isinstance(password, str) or len(password) < MIN_PASSWORD_LEN:
+        return jsonify({"error": f"Password must be at least {MIN_PASSWORD_LEN} characters"}), 400
+    fields, err = parse_profile(data)
+    if err:
+        return jsonify({"error": err}), 400
+    if User.query.filter(func.lower(User.email) == email).first():
         return jsonify({"error": "An account with this email already exists"}), 409
+
     user = User(name=name, email=email, password_hash=generate_password_hash(password))
-    db.session.add(user)
-    db.session.commit()
+    try:
+        # User + profile are written in one transaction, so a failure leaves neither behind.
+        db.session.add(user)
+        db.session.flush()  # assigns user.id
+        db.session.add(FarmerProfile(user_id=user.id, field_id=f"FU-{user.id:04d}", **fields))
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"error": "An account with this email already exists"}), 409
     token = create_access_token(identity=str(user.id))
     return jsonify({"token": token, "user": user.to_dict()}), 201
 
 
 @app.route('/auth/login', methods=['POST'])
 def login():
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     email, password = data.get('email'), data.get('password')
-    user = User.query.filter_by(email=email).first()
-    if not user or not check_password_hash(user.password_hash, password or ''):
+    if not isinstance(email, str) or not isinstance(password, str):
+        return jsonify({"error": "Invalid email or password"}), 401
+    user = User.query.filter(func.lower(User.email) == email.strip().lower()).first()
+    if not user or not check_password_hash(user.password_hash, password):
         return jsonify({"error": "Invalid email or password"}), 401
     token = create_access_token(identity=str(user.id))
     return jsonify({"token": token, "user": user.to_dict()})
@@ -194,6 +280,35 @@ def me():
     if not user:
         return jsonify({"error": "User not found"}), 404
     return jsonify(user.to_dict())
+
+
+# ---------------------------------------------------------------- Profile --
+# Both endpoints act only on the user in the JWT; no user id is accepted from the client.
+
+@app.route('/farmer/profile', methods=['GET'])
+@jwt_required()
+def get_profile():
+    user = db.session.get(User, int(get_jwt_identity()))
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    return jsonify({"profile": user.profile.to_dict() if user.profile else None})
+
+
+@app.route('/farmer/profile', methods=['PUT'])
+@jwt_required()
+def update_profile():
+    user = db.session.get(User, int(get_jwt_identity()))
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    fields, err = parse_profile(request.get_json(silent=True) or {})
+    if err:
+        return jsonify({"error": err}), 400
+    if user.profile is None:
+        user.profile = FarmerProfile(user_id=user.id, field_id=f"FU-{user.id:04d}")
+    for key, value in fields.items():
+        setattr(user.profile, key, value)
+    db.session.commit()
+    return jsonify({"profile": user.profile.to_dict()})
 
 
 # ----------------------------------------------------------------- Forum --

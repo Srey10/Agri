@@ -10,21 +10,31 @@ import CropDisease from './pages/CropDisease'
 import Forum from './pages/Forum'
 import ForumPost from './pages/ForumPost'
 import Layout from './components/Layout'
+import { getToken, clearToken, fetchCurrentUser } from './data/api'
 
 function App() {
-  const [user, setUser] = useState(() => {
-    const saved = localStorage.getItem('agrovista_user')
-    return saved ? JSON.parse(saved) : null
-  })
+  // The user always comes from the backend (/auth/me, via the JWT), never from
+  // data cached in the browser, so each farmer sees their own profile.
+  const [user, setUser] = useState(null)
+  const [checkingSession, setCheckingSession] = useState(() => !!getToken())
 
-  const login = (userData) => {
-    localStorage.setItem('agrovista_user', JSON.stringify(userData))
-    setUser(userData)
-  }
+  useEffect(() => {
+    localStorage.removeItem('agrovista_user') // legacy cached user object
+    if (!getToken()) return
+    fetchCurrentUser()
+      .then(setUser)
+      .finally(() => setCheckingSession(false))
+  }, [])
+
+  const login = (userData) => setUser(userData)
 
   const logout = () => {
-    localStorage.removeItem('agrovista_user')
+    clearToken()
     setUser(null)
+  }
+
+  if (checkingSession) {
+    return <div style={{ padding: 40, textAlign: 'center' }}>Loading your farm…</div>
   }
 
   return (

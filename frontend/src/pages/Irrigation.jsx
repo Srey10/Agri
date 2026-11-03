@@ -2,14 +2,16 @@
 import { useState, useEffect, useRef } from 'react'
 import { MapContainer, TileLayer, Polygon, Popup } from 'react-leaflet'
 import { Droplets, Thermometer, Calendar, Plus, Download, MapPin } from 'lucide-react'
+import { getFarmInfo } from '../data/farm'
 import { FARM_BOUNDARY, buildZones } from './GISMapping'
 import './Irrigation.css'
 
-// Mote Patil Sugarcane Farms — exact coordinates
+// Sample farm coordinates for weather + map (not yet per-farmer)
 const FARM_LAT = 19.4308
 const FARM_LNG = 74.9010
-const FARM_NAME = 'Mote Patil Sugarcane Farms, Maharashtra'
 
+// Farm boundary polygon for map (same as GISMapping)
+// Sample traced boundary (not yet per-farmer)
 // Farm boundary polygon for map
 const farmPolygon = [
   [19.431147, 74.900480],
@@ -301,7 +303,9 @@ function formatTime(date) {
 
 const DAY_LABELS = ['Today', 'Tomorrow', 'Day 3', 'Day 4', 'Day 5']
 
-export default function Irrigation() {
+export default function Irrigation({ user }) {
+  const farm = getFarmInfo(user)
+  const FARM_NAME = [farm.farmName, farm.location].filter(Boolean).join(', ')
   const [activeTab, setActiveTab] = useState('schedule')
   const [forecast, setForecast] = useState(null)
   const [weatherLoading, setWeatherLoading] = useState(false)

@@ -16,12 +16,12 @@ export default function Login({ onLogin }) {
     if (!form.email || !form.password) { setError('Please fill all fields'); return }
     setLoading(true)
     try {
-      const user = await loginUser({ email: form.email, password: form.password })
+      const user = await loginUser({ email: form.email.trim(), password: form.password })
       onLogin(user)
     } catch (err) {
-      setError(err.message || 'Invalid credentials. Try arjun@agrovista.in / farm@123')
+      setError(err.message || 'Could not sign in. Is the server running?')
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   return (
@@ -67,7 +67,7 @@ export default function Login({ onLogin }) {
             <form onSubmit={handleSubmit} className="auth-form">
               <div className="form-group">
                 <label>Email Address</label>
-                <input className="input" type="email" placeholder="arjun@agrovista.in" value={form.email}
+                <input className="input" type="email" placeholder="you@example.com" autoComplete="email" value={form.email}
                   onChange={e => setForm({ ...form, email: e.target.value })} />
               </div>
               <div className="form-group">
@@ -79,10 +79,6 @@ export default function Login({ onLogin }) {
                     {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
                 </div>
-              </div>
-
-              <div className="auth-demo-hint">
-                <span>🔑 Demo: </span><code>arjun@agrovista.in</code> / <code>farm@123</code>
               </div>
 
               <button className="btn-primary auth-submit" type="submit" disabled={loading}>

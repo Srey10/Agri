@@ -4,9 +4,10 @@ import { Thermometer, Droplets, Wind, AlertTriangle, Clock, MapPin } from 'lucid
 import MapView from '../components/MapView'
 import AdvisoryCard from '../components/AdvisoryCard'
 import { FARM_BOUNDARY, buildZones, classifyHealth, healthColor, fetchRainfall } from './GISMapping'
+import { getFarmInfo } from '../data/farm'
 import './Dashboard.css'
 
-// Farm center coordinates — Mote Patil Sugarcane Farms
+// Sample farm centre used for weather and the GIS demo (not yet per-farmer)
 const FARM_LAT = 19.4308
 const FARM_LNG = 74.9010
 
@@ -101,7 +102,7 @@ function generateActivity(zones, weather) {
 }
 
 // Generate AI insight from actual zone data
-function generateInsight(zones, weather) {
+function generateInsight(zones, weather, farmName) {
   const problematic = zones.filter(z => z.health === 'Problematic')
   const moderate = zones.filter(z => z.health === 'Moderate')
   const healthy = zones.filter(z => z.health === 'Healthy')
@@ -110,7 +111,7 @@ function generateInsight(zones, weather) {
   const humidity = weather?.current?.relative_humidity_2m
 
   if (problematic.length === 0 && moderate.length <= 2) {
-    return `All ${healthy.length} zones at Mote Patil Sugarcane Farms are in good health. Current temperature ${temp ?? '—'}°C and humidity ${humidity ?? '—'}% are within optimal range for Co-86032 variety. Continue regular irrigation schedule.`
+    return `All ${healthy.length} zones at ${farmName} are in good health. Current temperature ${temp ?? '—'}°C and humidity ${humidity ?? '—'}% are within optimal range. Continue regular irrigation schedule.`
   }
 
   if (problematic.length > 0) {
@@ -121,13 +122,16 @@ function generateInsight(zones, weather) {
   return `${moderate.length} zones at moderate health. With ${rain ?? 0}mm current rainfall and ${temp ?? '—'}°C temperature, increase drip irrigation by 15% on Clay-soil zones. Apply foliar micronutrient spray within 48 hours.`
 }
 
-const fields = [
-  { id: 'MPS-Z01', name: 'North Block', crop: 'ऊस (Sugarcane)', status: 'active', location: 'Mote Patil Farm, Maharashtra' },
-  { id: 'MPS-Z02', name: 'Central Block', crop: 'ऊस (Sugarcane)', status: 'irrigated', location: 'Mote Patil Farm, Maharashtra' },
-  { id: 'MPS-Z03', name: 'South Block', crop: 'ऊस (Sugarcane)', status: 'drought-risk', location: 'Mote Patil Farm, Maharashtra' },
-]
+function buildFieldCards(farm) {
+  const prefix = farm.fieldId || 'FIELD'
+  const location = [farm.farmName, farm.location].filter(Boolean).join(', ')
+  return ['North Block', 'Central Block', 'South Block'].map((name, i) => ({
+    id: `${prefix}-Z0${i + 1}`, name, crop: farm.crop || 'Crop not set', location,
+  }))
+}
 
 export default function Dashboard({ user }) {
+  const farm = getFarmInfo(user)
   const [currentTime, setCurrentTime] = useState(new Date())
   const [dashZones, setDashZones] = useState(partialZones)
   const [weather, setWeather] = useState(null)
@@ -232,7 +236,7 @@ useEffect(() => {
 
   const alert = weatherAlert(weatherCode, precipSum3d)
   const activity = generateActivity(dashZones, weather)
-  const aiInsight = generateInsight(dashZones, weather)
+  const aiInsight = generateInsight(dashZones, weather, farm.farmName)
 
   // Risk badge based on problematic zones + weather
   const riskLevel = problematicCnt >= 3 || (temp > 38) ? 'HIGH' :
@@ -247,8 +251,8 @@ useEffect(() => {
       {/* Header */}
       <div className="dash-header">
         <div>
-          <h1 className="dash-title">🌾 Mote Patil Sugarcane Farms – Command Center</h1>
-          <p className="dash-sub">Mote Patil Farm House Rd, Maharashtra · {currentTime.toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+          <h1 className="dash-title">🌾 {farm.farmName} – Command Center</h1>
+          <p className="dash-sub">{farm.location ? `${farm.location} · ` : ''}{currentTime.toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
         </div>
         <div className="dash-header-right">
           <div className={`badge ${riskBadge}`}><span className={`dot dot-${riskLevel === 'HIGH' ? 'red' : riskLevel === 'MODERATE' ? 'orange' : 'green'}`}></span> {riskLevel} RISK</div>
@@ -261,7 +265,7 @@ useEffect(() => {
         <div className="alert-icon"><AlertTriangle size={20} /></div>
         <div className="alert-content">
           <div className="alert-title">
-            {alert.level === 'high' ? '⛈️' : alert.level === 'medium' ? '🌡️' : '✅'} Farm Weather Update — Mote Patil Sugarcane Farms
+            {alert.level === 'high' ? '⛈️' : alert.level === 'medium' ? '🌡️' : '✅'} Farm Weather Update — {farm.farmName}
           </div>
           <div className="alert-sub">{weatherLoading ? 'Fetching live weather data...' : alert.text}</div>
         </div>
@@ -338,7 +342,7 @@ useEffect(() => {
         <div className="dash-map-col">
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div className="map-header">
-              <div className="map-title">🗺️ Live GIS – Mote Patil Sugarcane Farms, Maharashtra</div>
+              <div className="map-title">🗺️ Live GIS – {farm.farmName}{farm.location ? `, ${farm.location}` : ''}</div>
               <div className="map-controls">
                 <span className="badge badge-green">🌱 {healthyCnt} Healthy</span>
                 <span className="badge badge-yellow">⚠️ {moderateCnt} Moderate</span>
@@ -362,7 +366,7 @@ useEffect(() => {
 
           {/* Zone summary cards — driven by live data */}
           <div className="fields-row">
-            {fields.map((f, i) => {
+            {buildFieldCards(farm).map((f, i) => {
               // Map field cards to zone groups
               const zoneGroup = dashZones.slice(i * Math.ceil(dashZones.length / 3), (i + 1) * Math.ceil(dashZones.length / 3))
               const avgNdvi = zoneGroup.length ? (zoneGroup.reduce((s, z) => s + z.ndvi, 0) / zoneGroup.length).toFixed(2) : '—'
@@ -407,7 +411,7 @@ useEffect(() => {
           {/* Live Weather */}
           <div className="card">
             <div className="card-section-title">
-              🌤️ Live Weather – Mote Patil Farm
+              🌤️ Live Weather – {farm.farmName}
               {!weatherLoading && <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--green-accent)', fontWeight: 400 }}>● LIVE</span>}
             </div>
             {weatherLoading ? (

@@ -19,6 +19,7 @@ import {
   X
 } from 'lucide-react'
 
+import { getFarmInfo } from '../data/farm'
 import './Layout.css'
 
 const navItems = [
@@ -72,6 +73,7 @@ const languages = [
 
 export default function Layout({ user, onLogout }) {
   const navigate = useNavigate()
+  const farm = getFarmInfo(user)
 
   const [notifications] = useState(3)
 
@@ -138,13 +140,13 @@ export default function Layout({ user, onLogout }) {
         <div className="sidebar-user">
 
           <div className="user-avatar-sm">
-            {user.name?.[0]?.toUpperCase() || 'A'}
+            {user.name?.[0]?.toUpperCase() || '?'}
           </div>
 
           <div className="user-info-sm">
 
             <div className="user-name-sm">
-              {user.name || 'Arjun Sharma'}
+              {user.name}
             </div>
 
             <div className="user-role">
@@ -162,7 +164,9 @@ export default function Layout({ user, onLogout }) {
           </div>
 
           <div className="field-id">
-            {user.field || 'MPS-01 • Maharashtra'}
+            {farm.hasProfile
+              ? [farm.fieldId, farm.farmName].filter(Boolean).join(' • ')
+              : 'Farm profile not set up'}
           </div>
 
         </div>
