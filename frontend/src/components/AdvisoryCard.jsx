@@ -4,7 +4,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai'
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY
 const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null
 
-export default function AdvisoryCard({ zones, temp, rainfall, ready }) {
+export default function AdvisoryCard({ zones, temp, rainfall, crop, location, ready }) {
   const [tips, setTips] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -18,10 +18,10 @@ export default function AdvisoryCard({ zones, temp, rainfall, ready }) {
     setError('')
     try {
       const summary = zones
-        .map(z => `Zone ${z.id + 1}: health=${z.health}, NDVI=${z.ndvi?.toFixed?.(2) ?? 'n/a'}`)
+        .map(z => `Zone ${z.id + 1}: health=${z.health ?? 'n/a'}, NDVI=${z.ndvi?.toFixed?.(2) ?? 'n/a'}${z.soil ? `, soil=${z.soil}` : ''}`)
         .join('\n')
 
-      const prompt = `You are an agricultural advisor for a sugarcane farm in Maharashtra, India.
+      const prompt = `You are an agricultural advisor for a ${crop ? `${crop} ` : ''}farm${location ? ` in ${location}` : ''}, India.
 Current temperature: ${temp ?? 'unknown'}°C. Rainfall today: ${rainfall ?? 0} mm.
 Zone data:
 ${summary}

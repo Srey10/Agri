@@ -12,7 +12,7 @@ function FarmBoundsEffect({ farmBoundary }) {
     // coords are [lng, lat] in GeoJSON — Leaflet needs [lat, lng]
     const latLngs = coords.map(([lng, lat]) => [lat, lng])
     const bounds = L.latLngBounds(latLngs)
-    map.fitBounds(bounds, { padding: [20, 20] })
+    map.fitBounds(bounds, { padding: [20, 20], animate: false }) // no animation: the map may unmount mid-transition
   }, [map, farmBoundary])
   return null
 }
@@ -53,7 +53,7 @@ export default function MapView({ zones = [], farmBoundary, onZoneClick, selecte
         const lngs = coords.map(c => c[0])
         return [(Math.min(...lats) + Math.max(...lats)) / 2, (Math.min(...lngs) + Math.max(...lngs)) / 2]
       })()
-    : [19.4308, 74.9010]
+    : [22.5, 79] // India; farmBoundary is always set for mapped farmers
 
   return (
     <MapContainer

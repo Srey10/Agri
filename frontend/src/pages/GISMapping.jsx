@@ -1,47 +1,14 @@
 /* eslint-disable react-refresh/only-export-components */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import * as turf from '@turf/turf'
 import MapView from '../components/MapView'
-import { Layers, Activity, Droplets, Leaf } from 'lucide-react'
+import { Layers, Activity, Droplets, Leaf, Pencil } from 'lucide-react'
+import { getFarmInfo, getFieldFeature, boundaryAreaHa } from '../data/farm'
 import './GISMapping.css'
 
-// Farm boundary: Mote Patil Sugarcane Farms, Maharashtra
-// Traced from satellite imagery at 19.430895, 74.900874
-// The farm has a diagonal NW road boundary and is ~8-10 hectares
-export const FARM_BOUNDARY = {
-  type: 'Feature',
-  properties: {
-    name: 'Mote Patil Sugarcane Farms'
-  },
-  geometry: {
-    type: 'Polygon',
-    coordinates: [[
-      [74.900480, 19.431147],
-      [74.901019, 19.431153],
-      [74.901906, 19.431138],
-      [74.901972, 19.430525],
-      [74.901574, 19.430661],
-      [74.901609, 19.430316],
-      [74.901629, 19.429984],
-      [74.901130, 19.430051],
-      [74.900718, 19.430128],
-      [74.900242, 19.430202],
-      [74.899713, 19.430285],
-      [74.900040, 19.430611],
-      [74.900324, 19.430935],
-      [74.900480, 19.431147]
-    ]]
-  }
-}
-
-// eslint-disable-next-line react-refresh/only-export-components
-export const NDVI_VALUES = [
-  0.72, 0.45, 0.31, 0.68,
-  0.55, 0.82, 0.38, 0.61,
-  0.77, 0.42, 0.30, 0.88,
-  0.50, 0.65, 0.35, 0.90,
-]
-
+// Farm boundary fallback helper or exports if needed
+export { boundaryAreaHa }
 // eslint-disable-next-line react-refresh/only-export-components
 export function classifyHealth(ndvi, rainfall) {
   if (rainfall === null || rainfall === undefined) {
@@ -60,37 +27,47 @@ export function healthColor(status) {
   return colors[status]
 }
 
+// Split the farmer's own boundary into roughly a 4×4 grid of zones. The cell size adapts to the
+// farm size, so a 1 ha plot and a 50 ha farm both produce a handful of zones (and API calls).
+// NDVI and rainfall start empty and are filled from live data; soil type is not measured, so it is null.
 export function buildZones(farmBoundary) {
-  const bbox = turf.bbox(farmBoundary)
-  // cellSide ~0.002 degrees produces a 4×4 grid over the actual ~0.007° farm bbox
-  const grid = turf.squareGrid(bbox, 0.0005, { units: 'degrees' })
+  const [minX, minY, maxX, maxY] = turf.bbox(farmBoundary)
+  const extent = Math.max(maxX - minX, maxY - minY)
+  // Slightly oversized cells and a padded origin, so rounding in squareGrid can't leave an uncovered edge strip.
+  const cellSide = (extent / 4) * 1.02
+  const pad = extent * 0.005
+  const gridBox = [minX - pad, minY - pad, minX - pad + cellSide * 4.01, minY - pad + cellSide * 4.01]
+  const grid = turf.squareGrid(gridBox, cellSide, { units: 'degrees' })
+  const farmAreaM2 = turf.area(farmBoundary)
 
   const zones = []
-  grid.features.forEach((cell, idx) => {
+  grid.features.forEach((cell) => {
     const intersection = turf.intersect(turf.featureCollection([cell, farmBoundary]))
     if (!intersection) return
 
-    const zoneCentroid = turf.centroid(intersection)
-    const areaM2 = turf.area(intersection)
-    const areaHa = Math.round(areaM2 / 10000 * 100) / 100
-    const centroidCoords = zoneCentroid.geometry.coordinates // [lng, lat]
+    // A concave farm can cut one cell into several pieces; each piece becomes its own zone.
+    const pieces = intersection.geometry.type === 'MultiPolygon'
+      ? intersection.geometry.coordinates.map(c => turf.polygon(c))
+      : [intersection]
 
-    const isContained = turf.booleanContains(farmBoundary, zoneCentroid)
-    if (!isContained) {
-      console.warn(`Zone ${idx} centroid is outside farm boundary`)
-    }
+    pieces.forEach((piece) => {
+      const areaM2 = turf.area(piece)
+      if (areaM2 < farmAreaM2 * 0.01) return // ignore slivers
 
-    zones.push({
-      id: zones.length,
-      geometry: intersection,
-      centroid: [centroidCoords[1], centroidCoords[0]], // [lat, lng] for Leaflet
-      centroidLngLat: centroidCoords, // [lng, lat] for API calls
-      areaM2,
-      areaHa,
-      ndvi: NDVI_VALUES[zones.length] ?? 0.5,
-      rainfall: null,
-      health: null,
-      color: null,
+      const centroidCoords = turf.centroid(piece).geometry.coordinates // [lng, lat]
+      zones.push({
+        id: zones.length,
+        geometry: piece,
+        centroid: [centroidCoords[1], centroidCoords[0]], // [lat, lng] for Leaflet
+        centroidLngLat: centroidCoords, // [lng, lat] for API calls
+        areaM2,
+        areaHa: Math.round(areaM2 / 10000 * 100) / 100,
+        ndvi: null,
+        soil: null,
+        rainfall: null,
+        health: null,
+        color: null,
+      })
     })
   })
 
@@ -112,7 +89,10 @@ export async function fetchRainfall(zones) {
   return results
 }
 
-export default function GISMapping() {
+export default function GISMapping({ user, field }) {
+  const farm = getFarmInfo(user, field)
+  const navigate = useNavigate()
+  const boundary = useMemo(() => getFieldFeature(field), [field])
   const [zones, setZones] = useState([])
   const [loading, setLoading] = useState(true)
   const [selectedZone, setSelectedZone] = useState(null)
@@ -121,7 +101,7 @@ export default function GISMapping() {
 
   useEffect(() => {
   const loadGISData = async () => {
-    const partial = buildZones(FARM_BOUNDARY)
+    const partial = buildZones(boundary)
 
     setZones(partial)
     setLoading(true)
@@ -154,7 +134,7 @@ export default function GISMapping() {
               data
             )
 
-            return data.ndvi
+            return data.ndvi ?? null
           } catch (error) {
             console.error(
               `NDVI failed for zone ${zone.id + 1}:`,
@@ -204,9 +184,9 @@ export default function GISMapping() {
 
   loadGISData()
 
-}, [])
+}, [boundary])
 
-  const totalAreaHa = zones.reduce((sum, z) => sum + (z.areaHa || 0), 0).toFixed(2)
+  const totalAreaHa = boundaryAreaHa(boundary).toFixed(2)
   const healthyCnt = zones.filter(z => z.health === 'Healthy').length
   const moderateCnt = zones.filter(z => z.health === 'Moderate').length
   const problematicCnt = zones.filter(z => z.health === 'Problematic').length
@@ -216,13 +196,16 @@ export default function GISMapping() {
       {/* Header */}
       <div className="gis-header">
         <div>
-          <h1 className="dash-title">🗺️ GIS Mapping – Mote Patil Sugarcane Farms</h1>
-          <p className="dash-sub">Mote Patil Farm House Rd, Maharashtra · 4×4 zone grid</p>
+          <h1 className="dash-title">🗺️ GIS Mapping – {farm.farmName} · {farm.fieldName}</h1>
+          <p className="dash-sub">{farm.location ? `${farm.location} · ` : ''}{zones.length} zones · your saved farm boundary</p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <div className="badge badge-green pulse"><span className="dot dot-green"></span> Live Data</div>
           <div className="badge badge-blue">{zones.length} Zones</div>
-          <div className="badge badge-yellow">Sugarcane</div>
+          <button type="button" className="btn-outline" onClick={() => navigate(`/farm-mapping?field=${field.id}`)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Pencil size={13} /> Edit farm boundary
+          </button>
+          {farm.crop && <div className="badge badge-yellow">{farm.crop}</div>}
         </div>
       </div>
 
@@ -308,7 +291,7 @@ export default function GISMapping() {
             <div style={{ flex: 1, minHeight: 480 }}>
               <MapView
                 zones={zones}
-                farmBoundary={FARM_BOUNDARY}
+                farmBoundary={boundary}
                 onZoneClick={z => setSelectedZone(z)}
                 selectedZoneId={selectedZone?.id ?? null}
                 showZones={layerZones}
@@ -326,7 +309,7 @@ export default function GISMapping() {
                 <div className="zone-detail-header">
                   <div>
                     <div className="zone-detail-id">Zone {selectedZone.id + 1}</div>
-                    <div className="zone-detail-sub">Sugarcane · Mote Patil Farms, Maharashtra</div>
+                    <div className="zone-detail-sub">{farm.crop ? `${farm.crop} · ` : ''}{farm.fieldName}, {farm.farmName}{farm.location ? `, ${farm.location}` : ''}</div>
                   </div>
                   <div className={`badge ${selectedZone.health === 'Healthy' ? 'badge-green' : selectedZone.health === 'Moderate' ? 'badge-yellow' : 'badge-red'}`}>
                     {selectedZone.health}
@@ -339,7 +322,7 @@ export default function GISMapping() {
                   {[
                     {
                       label: 'NDVI',
-                      val: selectedZone.ndvi?.toFixed(2),
+                      val: selectedZone.ndvi?.toFixed(2) ?? 'N/A',
                       unit: '',
                       color: selectedZone.ndvi >= 0.65 ? 'var(--green-accent)' : selectedZone.ndvi >= 0.40 ? 'var(--yellow)' : 'var(--red)'
                     },
@@ -375,6 +358,12 @@ export default function GISMapping() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
                     <span className="text-sm text-muted">0</span>
                     <span className="text-sm text-muted">1.0</span>
+                  </div>
+                </div>
+                <div style={{ marginTop: 14 }}>
+                  <div className="card-section-title"><Droplets size={12} style={{ marginRight: 4 }} /> Soil Type</div>
+                  <div style={{ marginTop: 8, fontSize: 14, fontWeight: 600, color: 'var(--teal)' }}>
+                    {selectedZone.soil || 'Not measured yet'}
                   </div>
                 </div>
               </div>

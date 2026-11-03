@@ -1,19 +1,14 @@
 /* eslint-disable no-unused-vars */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Thermometer, Droplets, Wind, AlertTriangle, Clock, MapPin, Bell } from 'lucide-react'
 import MapView from '../components/MapView'
 import AdvisoryCard from '../components/AdvisoryCard'
-import { FARM_BOUNDARY, buildZones, classifyHealth, healthColor, fetchRainfall } from './GISMapping'
+import { buildZones, classifyHealth, healthColor, fetchRainfall } from './GISMapping'
+import { getFarmInfo, getFieldFeature, getBoundaryCenter } from '../data/farm'
 import './Dashboard.css'
 
-// Farm center coordinates — Mote Patil Sugarcane Farms
-const FARM_LAT = 19.4308
-const FARM_LNG = 74.9010
-
-const partialZones = buildZones(FARM_BOUNDARY)
-
 // Fetch live weather + forecast from Open-Meteo for the exact farm location
-async function fetchWeather() {
+async function fetchWeather(FARM_LAT, FARM_LNG) {
   const url =
     `https://api.open-meteo.com/v1/forecast` +
     `?latitude=${FARM_LAT}&longitude=${FARM_LNG}` +
@@ -26,11 +21,11 @@ async function fetchWeather() {
 }
 
 // Map weather to farmer-friendly alert
-function weatherAlert(code, precipSum, temp) {
+function weatherAlert(code, precipSum, temp, crop = 'crops') {
   if (code >= 95) return { level: 'high', text: '⛈️ Storm warning near your farm! Secure equipment and pause field operations.' }
   if (code >= 61) return { level: 'medium', text: '🌧️ Rain expected. Hold off on fertilizer spraying and watch for standing water.' }
-  if (temp > 36) return { level: 'medium', text: '🔥 High heat today. Water sugarcane early morning or late evening to prevent scorch.' }
-  if (precipSum < 1) return { level: 'medium', text: '☀️ Dry spell continuing. Activate drip irrigation on all sugarcane blocks today.' }
+  if (temp > 36) return { level: 'medium', text: `🔥 High heat today. Water ${crop} early morning or late evening to prevent scorch.` }
+  if (precipSum < 1) return { level: 'medium', text: `☀️ Dry spell continuing. Activate drip irrigation across all ${crop} blocks today.` }
   return { level: 'low', text: '✅ Favourable weather for crop growth. Continue routine farm operations.' }
 }
 
@@ -86,8 +81,15 @@ function generateActivity(zones, weather) {
     activities.push({
       icon: '🌡️', color: '#f97316',
       title: `High Heat Advisory: ${weather.current.temperature_2m}°C`,
-      sub: 'Sugarcane transpires rapidly in hot weather. Ensure water reaches deeper roots.',
+      sub: 'Crops transpire rapidly in hot weather. Ensure water reaches deeper roots.',
       time: '15 mins ago'
+    })
+  } else if (weather?.current?.temperature_2m) {
+    activities.push({
+      icon: '🌤️', color: '#eab308',
+      title: `Temperature: ${weather.current.temperature_2m}°C`,
+      sub: 'Conditions within a normal range. Monitor afternoon heat.',
+      time: '5 mins ago'
     })
   }
 
@@ -102,7 +104,7 @@ function generateActivity(zones, weather) {
 }
 
 // Generate AI insight from actual zone data
-function generateInsight(zones, weather) {
+function generateInsight(zones, weather, farmName) {
   const problematic = zones.filter(z => z.health === 'Problematic')
   const moderate = zones.filter(z => z.health === 'Moderate')
   const healthy = zones.filter(z => z.health === 'Healthy')
@@ -111,23 +113,37 @@ function generateInsight(zones, weather) {
   const humidity = weather?.current?.relative_humidity_2m
 
   if (problematic.length === 0 && moderate.length <= 2) {
-    return `All ${healthy.length} zones at Mote Patil Sugarcane Farms are in good health. Current temperature ${temp ?? '—'}°C and humidity ${humidity ?? '—'}% are within optimal range for Co-86032 variety. Continue regular irrigation schedule.`
+    return `All ${healthy.length} zones at ${farmName} are in good health. Current temperature ${temp ?? '—'}°C and humidity ${humidity ?? '—'}% are within optimal range. Continue regular irrigation schedule.`
   }
 
   if (problematic.length > 0) {
-    return `Zone${problematic.length > 1 ? 's' : ''} ${problematic.map(z => z.id + 1).join(', ')} show critical stress — low vegetation density with rainfall under 1mm. At ${temp ?? '—'}°C and ${humidity ?? '—'}% humidity, risk of red rot and moisture stress is elevated. Recommend immediate inspection and potassium sulphate application at 50 kg/ha.`
+    const soilTypes = [...new Set(problematic.map(z => z.soil).filter(Boolean))]
+    return `Zone${problematic.length > 1 ? 's' : ''} ${problematic.map(z => z.id + 1).join(', ')} ${soilTypes.length ? `(${soilTypes.join('/')}) ` : ''}show critical stress — low vegetation density with rainfall under 1mm. At ${temp ?? '—'}°C and ${humidity ?? '—'}% humidity, risk of crop stress is elevated. Recommend immediate inspection and irrigation.`
   }
 
   return `${moderate.length} zones at moderate health. With ${rain ?? 0}mm current rainfall and ${temp ?? '—'}°C temperature, increase drip irrigation by 15% on stressed zones. Apply foliar micronutrient spray within 48 hours.`
 }
 
-const fields = [
-  { id: 'MPS-Z01', name: 'North Block', crop: 'ऊस (Sugarcane)', status: 'active', location: 'Mote Patil Farm, Maharashtra' },
-  { id: 'MPS-Z02', name: 'Central Block', crop: 'ऊस (Sugarcane)', status: 'irrigated', location: 'Mote Patil Farm, Maharashtra' },
-  { id: 'MPS-Z03', name: 'South Block', crop: 'ऊस (Sugarcane)', status: 'drought-risk', location: 'Mote Patil Farm, Maharashtra' },
-]
+// Up to three summary cards, each covering a consecutive group of the field's zones.
+function buildFieldCards(farm, zoneCount) {
+  const prefix = farm.fieldId || 'FIELD'
+  const location = [farm.farmName, farm.fieldName, farm.location].filter(Boolean).join(', ')
+  const size = Math.max(1, Math.ceil(zoneCount / 3))
+  const cards = []
+  for (let i = 0; i < 3 && i * size < zoneCount; i++) {
+    const from = i * size + 1
+    const to = Math.min((i + 1) * size, zoneCount)
+    cards.push({ id: `${prefix}-Z0${i + 1}`, name: from === to ? `Zone ${from}` : `Zones ${from}–${to}`, crop: farm.crop || 'Crop not set', location })
+  }
+  return cards
+}
 
-export default function Dashboard({ user }) {
+export default function Dashboard({ user, field }) {
+  const farm = getFarmInfo(user, field)
+  // Zones and weather location come from the farmer's own saved boundary
+  const boundary = useMemo(() => getFieldFeature(field), [field])
+  const partialZones = useMemo(() => buildZones(boundary), [boundary])
+  const [farmLat, farmLng] = useMemo(() => getBoundaryCenter(boundary), [boundary])
   const [currentTime, setCurrentTime] = useState(new Date())
   const [dashZones, setDashZones] = useState(partialZones)
   const [weather, setWeather] = useState(null)
@@ -142,11 +158,11 @@ export default function Dashboard({ user }) {
 
   // Fetch live weather for exact farm location
   useEffect(() => {
-    fetchWeather()
+    fetchWeather(farmLat, farmLng)
       .then(data => setWeather(data))
       .catch(() => setWeather(null))
       .finally(() => setWeatherLoading(false))
-  }, [])
+  }, [farmLat, farmLng])
 
   // Fetch live rainfall per zone and classify health
 // Fetch live rainfall + Sentinel-2 NDVI per zone
@@ -178,7 +194,7 @@ useEffect(() => {
               data
             )
 
-            return data.ndvi
+            return data.ndvi ?? null
           } catch (error) {
             console.error(
               `Dashboard NDVI failed for zone ${zone.id + 1}:`,
@@ -216,7 +232,7 @@ useEffect(() => {
   }
 
   loadDashboardZones()
-}, [])
+}, [partialZones])
 
   const healthyCnt = dashZones.filter(z => z.health === 'Healthy').length
   const moderateCnt = dashZones.filter(z => z.health === 'Moderate').length
@@ -232,6 +248,7 @@ useEffect(() => {
   const alert = weatherAlert(weatherCode, precipSum3d, temp)
   const sprayCondition = getSprayCondition(windSpeed, precipitation, temp)
   const activity = generateActivity(dashZones, weather)
+  const aiInsight = generateInsight(dashZones, weather, farm.farmName)
 
   const [selectedPlotModal, setSelectedPlotModal] = useState(null)
   const [showAlertsModal, setShowAlertsModal] = useState(false)
@@ -410,8 +427,12 @@ useEffect(() => {
       {/* Header */}
       <div className="dash-header">
         <div>
-          <h1 className="dash-title">🌾 Mote Patil Sugarcane Farms – Command Center</h1>
-          <p className="dash-sub">Mote Patil Farm House Rd, Maharashtra · {currentTime.toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+          <h1 className="dash-title">🌾 {farm.farmName} – Command Center</h1>
+          <p className="dash-sub">{[
+            farm.farmerName && `Farmer: ${farm.farmerName}`,
+            farm.fieldName && `Field: ${farm.fieldName}${farm.fieldAreaHa != null ? ` (${farm.fieldAreaHa.toFixed(2)} ha)` : ''}`,
+            farm.location,
+          ].filter(Boolean).join(' · ')}{' · '}{currentTime.toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
         </div>
         <div className="dash-header-right">
           <button
@@ -442,7 +463,7 @@ useEffect(() => {
         <div className="alert-icon"><AlertTriangle size={20} /></div>
         <div className="alert-content">
           <div className="alert-title">
-            {alert.level === 'high' ? '⛈️' : alert.level === 'medium' ? '🌡️' : '✅'} Today's Weather & Crop Guidance
+            {alert.level === 'high' ? '⛈️' : alert.level === 'medium' ? '🌡️' : '✅'} Farm Guidance — {farm.farmName}
           </div>
           <div className="alert-sub">{weatherLoading ? 'Checking live farm weather...' : alert.text}</div>
         </div>
@@ -465,6 +486,8 @@ useEffect(() => {
         zones={dashZones}
         temp={temp}
         rainfall={precipitation}
+        crop={farm.crop}
+        location={farm.location}
         ready={!zonesLoading && !weatherLoading}
       />
       
@@ -528,7 +551,7 @@ useEffect(() => {
         <div className="dash-map-col">
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div className="map-header">
-              <div className="map-title">🗺️ Farm Plots Health Map – Click any plot for quick details</div>
+              <div className="map-title">🗺️ Farm Plots Health Map – {farm.farmName}</div>
               <div className="map-controls">
                 <span className="badge badge-green">🌱 {healthyCnt} Healthy</span>
                 <span className="badge badge-yellow">⚠️ {moderateCnt} Need Care</span>
@@ -538,7 +561,7 @@ useEffect(() => {
             <div style={{ height: 360 }}>
               <MapView
                 zones={dashZones}
-                farmBoundary={FARM_BOUNDARY}
+                farmBoundary={boundary}
                 selectedZoneId={selectedPlotModal?.zoneId ?? null}
               />
             </div>
@@ -551,7 +574,7 @@ useEffect(() => {
 
           {/* Zone summary cards — Simplified for Farmers */}
           <div className="fields-row">
-            {fields.map((f, i) => {
+            {buildFieldCards(farm, dashZones.length).map((f, i) => {
               const zoneGroup = dashZones.slice(i * Math.ceil(dashZones.length / 3), (i + 1) * Math.ceil(dashZones.length / 3))
               const avgRain = zoneGroup.length && zoneGroup[0].rainfall !== null
                 ? (zoneGroup.reduce((s, z) => s + (z.rainfall || 0), 0) / zoneGroup.length).toFixed(1)
@@ -622,7 +645,7 @@ useEffect(() => {
           {/* Live Weather */}
           <div className="card">
             <div className="card-section-title">
-              🌤️ Live Farm Weather
+              🌤️ Live Weather – {farm.farmName}
               {!weatherLoading && <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--green-accent)', fontWeight: 400 }}>● LIVE</span>}
             </div>
             {weatherLoading ? (

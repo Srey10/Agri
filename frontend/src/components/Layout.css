@@ -80,6 +80,8 @@
 }
 .field-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 3px; }
 .field-id { font-size: 12px; font-weight: 600; color: var(--green-accent); }
+.field-select { width: 100%; margin: 4px 0 6px; padding: 8px 10px; background: var(--bg-card2); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; }
+.field-select:focus { outline: none; border-color: var(--green-primary); }
 
 .sidebar-nav {
   flex: 1;

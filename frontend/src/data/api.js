@@ -29,8 +29,8 @@ async function request(path, { method = 'GET', body, auth = false } = {}) {
 }
 
 // ---- Auth --------------------------------------------------------------
-export async function registerUser({ name, email, password }) {
-  const data = await request('/auth/register', { method: 'POST', body: { name, email, password } })
+export async function registerUser({ name, email, password, ...profile }) {
+  const data = await request('/auth/register', { method: 'POST', body: { name, email, password, ...profile } })
   setToken(data.token)
   return data.user
 }
@@ -49,6 +49,33 @@ export async function fetchCurrentUser() {
     clearToken()
     return null
   }
+}
+
+export function fetchFarmerProfile() {
+  return request('/farmer/profile', { auth: true })
+}
+
+// Partial update: only the keys you pass change. Resolves to { name, profile, user }.
+export function updateProfile(changes) {
+  return request('/farmer/profile', { method: 'PUT', auth: true, body: changes })
+}
+
+// Fields (plots). Both resolve to { field, user }; `user` carries the refreshed fields list.
+export function createField({ name, boundary }) {
+  return request('/farmer/fields', { method: 'POST', auth: true, body: { name, boundary } })
+}
+
+export function updateField(id, changes) {
+  return request(`/farmer/fields/${id}`, { method: 'PUT', auth: true, body: changes })
+}
+
+export function fetchFarmBoundary() {
+  return request('/farmer/farm-boundary', { auth: true })
+}
+
+// boundary: GeoJSON Polygon. Resolves to { boundary, areaHectares, user } where user has mappingComplete.
+export function saveFarmBoundary(boundary) {
+  return request('/farmer/farm-boundary', { method: 'PUT', auth: true, body: { boundary } })
 }
 
 // ---- Forum ---------------------------------------------------------------
@@ -82,4 +109,12 @@ export function toggleLike(postId) {
 
 export function reportItem(postId, { type, targetId, reason }) {
   return request(`/forum/posts/${postId}/report`, { method: 'POST', auth: true, body: { type, targetId, reason } })
+}
+
+// ---- Quick Chat ----------------------------------------------------------
+export function getChatMessages(after = 0) {
+  return request(`/chat/messages?after=${after}`, { auth: true })
+}
+export function sendChatMessage(content) {
+  return request('/chat/messages', { method: 'POST', auth: true, body: { content } })
 }
