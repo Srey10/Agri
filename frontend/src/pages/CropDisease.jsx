@@ -2,6 +2,7 @@ import { useState, useRef } from 'react'
 import { Upload, ImagePlus, X, Microscope, AlertTriangle, CheckCircle, Loader2 } from 'lucide-react'
 import { getFarmInfo } from '../data/farm'
 import './CropDisease.css'
+import { ML_API_URL } from '../data/api'
 
 const COMMON_DISEASES = [
   { name: 'Red Rot', emoji: '🔴', severity: 'High', description: 'Caused by Colletotrichum falcatum. Affects stalk internodes, red discolouration with white patches.', action: 'Remove infected stalks. Apply Carbendazim 0.1%.' },
@@ -43,7 +44,7 @@ export default function CropDisease({ user, field }) {
       const formData = new FormData()
       formData.append("image", image)
 
-      const res = await fetch("http://127.0.0.1:5000/predict", {
+      const res = await fetch(`${ML_API_URL}/predict`, {
         method: "POST",
         body: formData
       })

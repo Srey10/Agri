@@ -6,6 +6,7 @@ import AdvisoryCard from '../components/AdvisoryCard'
 import { buildZones, classifyHealth, healthColor, fetchRainfall } from './GISMapping'
 import { getFarmInfo, getFieldFeature, getBoundaryCenter } from '../data/farm'
 import './Dashboard.css'
+import { ML_API_URL } from '../data/api'
 
 // Fetch live weather + forecast from Open-Meteo for the exact farm location
 async function fetchWeather(FARM_LAT, FARM_LNG) {
@@ -167,7 +168,7 @@ useEffect(() => {
         partialZones.map(async (zone) => {
           try {
             const response = await fetch(
-              'http://127.0.0.1:5000/ndvi',
+              `${ML_API_URL}/ndvi`,
               {
                 method: 'POST',
                 headers: {

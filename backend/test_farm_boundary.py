@@ -13,9 +13,9 @@ import sys
 import tempfile
 import unittest
 
-_tmp = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
-_tmp.close()
-os.environ['DATABASE_URL'] = 'sqlite:///' + pathlib.Path(_tmp.name).as_posix()
+import test_support  # noqa: E402  (must be first: forces a throwaway SQLite database, see test_support.py)
+
+_tmp = test_support.use_temp_sqlite()
 
 import forum_api  # noqa: E402
 from farm_geometry import validate_polygon  # noqa: E402

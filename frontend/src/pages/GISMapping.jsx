@@ -6,6 +6,7 @@ import MapView from '../components/MapView'
 import { Layers, Activity, Droplets, Leaf, Pencil } from 'lucide-react'
 import { getFarmInfo, getFieldFeature, boundaryAreaHa } from '../data/farm'
 import './GISMapping.css'
+import { ML_API_URL } from '../data/api'
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function classifyHealth(ndvi, rainfall) {
@@ -113,7 +114,7 @@ export default function GISMapping({ user, field }) {
         partial.map(async (zone) => {
           try {
             const response = await fetch(
-              'http://127.0.0.1:5000/ndvi',
+              `${ML_API_URL}/ndvi`,
               {
                 method: 'POST',
                 headers: {
