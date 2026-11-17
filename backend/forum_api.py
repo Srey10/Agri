@@ -11,13 +11,17 @@ now they just run on two ports (predict: 5000, this: 5001).
 Run:
     pip install -r requirements_forum.txt
     python forum_api.py
-Creates agri_forum.db (SQLite file) in this folder on first run, with
-seed categories + a demo user + demo posts.
+
+Database: set DATABASE_URL (environment or backend/.env) to use PostgreSQL, e.g. Neon.
+With no DATABASE_URL it creates/uses instance/agri_forum.db (SQLite) as before.
+Demo data (a demo admin + sample posts) is seeded for SQLite only, unless
+SEED_DEMO_DATA=1 is set; the forum categories are always seeded when missing.
 """
 
 import json
 import os
 import re
+import sys
 from datetime import timedelta
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -30,13 +34,26 @@ from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 from farm_geometry import validate_polygon
 from datetime import datetime
+import db_config
+
+db_config.load_env_or_exit()  # backend/.env (fails loudly if it exists but python-dotenv is missing)
 
 app = Flask(__name__)
-CORS(app)
+# CORS: open by default (local development). For a hosted backend set CORS_ORIGINS to the frontend's address(es),
+# comma separated, e.g.  CORS_ORIGINS=https://agrisense.example.com,http://localhost:5173
+_cors_origins = [o.strip() for o in (os.environ.get('CORS_ORIGINS') or '').split(',') if o.strip()]
+CORS(app, origins=_cors_origins or '*')
 
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///agri_forum.db')
+# Configuration problems stop startup here, before any database connection is made.
+try:
+    DATABASE_URL = db_config.get_database_url()
+    db_config.check_jwt_secret(DATABASE_URL, os.environ.get('JWT_SECRET_KEY'))  # PostgreSQL needs a real secret
+except db_config.ConfigError as e:
+    sys.exit(f'ERROR: {e}')
+app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = db_config.engine_options(DATABASE_URL)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'dev-secret-change-in-production')
+app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY') or db_config.DEV_JWT_SECRET  # placeholder: SQLite dev only
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=7)
 
 db = SQLAlchemy(app)
@@ -217,11 +234,13 @@ def ensure_schema():
     if 'farmer_profile' not in insp.get_table_names():
         return
     existing = {c['name'] for c in insp.get_columns('farmer_profile')}
-    wanted = {'farm_boundary': 'TEXT', 'boundary_updated_at': 'DATETIME'}
+    # Column types are rendered for the current database (SQLite: DATETIME, PostgreSQL: TIMESTAMP)
+    dialect = db.engine.dialect
+    wanted = {'farm_boundary': db.Text(), 'boundary_updated_at': db.DateTime()}
     with db.engine.begin() as conn:
-        for name, sql_type in wanted.items():
+        for name, col_type in wanted.items():
             if name not in existing:
-                conn.execute(text(f'ALTER TABLE farmer_profile ADD COLUMN {name} {sql_type}'))
+                conn.execute(text(f'ALTER TABLE farmer_profile ADD COLUMN {name} {col_type.compile(dialect=dialect)}'))
 
 
 DEFAULT_FIELD_NAME = 'Main field'
@@ -251,10 +270,25 @@ def init_db():
     seed()
 
 
+def demo_seed_enabled():
+    """
+    Demo admin + sample posts: on for SQLite (local development), off for any other database
+    unless SEED_DEMO_DATA=1. The demo admin has a publicly known password, so it must never be
+    created automatically in a hosted database.
+    """
+    flag = (os.environ.get('SEED_DEMO_DATA') or '').strip().lower()
+    if flag:
+        return flag in ('1', 'true', 'yes', 'on')
+    return db.engine.dialect.name == 'sqlite'
+
+
 def seed():
     if Category.query.count() == 0:
         for cid, name, desc in DEFAULT_CATEGORIES:
             db.session.add(Category(id=cid, name=name, description=desc))
+    db.session.commit()
+    if not demo_seed_enabled():
+        return
     if User.query.filter_by(email="arjun@agrovista.in").first() is None:
         db.session.add(User(
             name="Arjun Sharma", email="arjun@agrovista.in",
@@ -739,7 +773,27 @@ def send_chat_message():
         del CHAT_MESSAGES[:-200]
     return jsonify(msg), 201
 
+@app.route('/health', methods=['GET'])
+def health():
+    """Liveness + database check: runs SELECT 1 against the configured database. No auth, no data returned."""
+    try:
+        db.session.execute(text('SELECT 1'))
+        return jsonify({"status": "ok", "database": db.engine.dialect.name, "driver": db.engine.dialect.driver})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"status": "error", "database": db.engine.dialect.name,
+                        "error": "database unreachable (" + type(e).__name__ + ")"}), 503
+
+
 if __name__ == '__main__':
-    with app.app_context():
-        init_db()
-    app.run(debug=False, port=5001)
+    db_config.exit_if_test_mode()
+    print(f'Database: {db_config.mask_url(DATABASE_URL)}')
+    try:
+        with app.app_context():
+            init_db()
+    except Exception as e:  # never fall back to another database: say what is wrong and stop
+        first = (str(e).strip().splitlines() or [''])[0][:300]
+        sys.exit(f'ERROR: cannot use the database {db_config.mask_url(DATABASE_URL)}\n  {type(e).__name__}: {first}\n'
+                 '  Check your internet connection, that port 5432 is not blocked by your network/firewall, '
+                 'and DATABASE_URL in backend/.env. The app does NOT fall back to SQLite.')
+    app.run(debug=False, port=int(os.environ.get('PORT', 5001)), host=os.environ.get('HOST', '127.0.0.1'))

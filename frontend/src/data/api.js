@@ -1,5 +1,7 @@
 // api.js — talks to the real Flask backend (forum_api.py) instead of localStorage.
-const BASE_URL = 'http://127.0.0.1:5001'
+// Override with VITE_API_URL / VITE_ML_API_URL (frontend/.env.local) to use a hosted backend.
+const BASE_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:5001').replace(/\/+$/, '')
+export const ML_API_URL = (import.meta.env.VITE_ML_API_URL || 'http://127.0.0.1:5000').replace(/\/+$/, '')
 const TOKEN_KEY = 'agrovista_token'
 
 export function getToken() {
@@ -18,13 +20,25 @@ async function request(path, { method = 'GET', body, auth = false } = {}) {
     const token = getToken()
     if (token) headers['Authorization'] = `Bearer ${token}`
   }
-  const res = await fetch(`${BASE_URL}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  })
+  let res
+  try {
+    res = await fetch(`${BASE_URL}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    })
+  } catch {
+    // network failure (backend not running / blocked): say so instead of the browser's "Failed to fetch"
+    const err = new Error(`Cannot reach the AgriSense server at ${BASE_URL}. Is the backend running?`)
+    err.network = true
+    throw err
+  }
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error || 'Request failed')
+  if (!res.ok) {
+    const err = new Error(data.error || data.msg || 'Request failed')
+    err.status = res.status
+    throw err
+  }
   return data
 }
 
@@ -45,8 +59,9 @@ export async function fetchCurrentUser() {
   if (!getToken()) return null
   try {
     return await request('/auth/me', { auth: true })
-  } catch {
-    clearToken()
+  } catch (err) {
+    // Only an auth rejection logs the user out. A server outage keeps the saved token.
+    if (!err.network && [401, 404, 422].includes(err.status)) clearToken()
     return null
   }
 }
