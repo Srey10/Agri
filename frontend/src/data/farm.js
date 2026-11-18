@@ -41,11 +41,13 @@ export function rememberActiveFieldId(userId, fieldId) {
 
 // Centre of the farm as [lat, lng] (Leaflet order); used for weather and satellite lookups.
 export function getBoundaryCenter(feature) {
+  if (!feature?.geometry?.coordinates) return [19.4308, 74.9010]
   const [lng, lat] = turf.centroid(feature).geometry.coordinates
   return [lat, lng]
 }
 
 export function boundaryAreaHa(feature) {
+  if (!feature?.geometry?.coordinates) return 0
   return turf.area(feature) / 10000
 }
 

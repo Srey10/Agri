@@ -124,6 +124,9 @@ export default function MapView({ zones = [], farmBoundary, onZoneClick, selecte
                     : 'High stress detected! Inspect leaves & irrigate immediately.'}
                 </div>
                 <div style={{ marginBottom: 4, fontSize: 12, color: '#64748b' }}>
+                  NDVI Score: <strong style={{ color: zone.health === 'Healthy' ? '#15803d' : zone.health === 'Moderate' ? '#854d0e' : '#b91c1c' }}>{zone.ndvi !== null && zone.ndvi !== undefined ? Number(zone.ndvi).toFixed(2) : '—'}</strong>
+                </div>
+                <div style={{ marginBottom: 4, fontSize: 12, color: '#64748b' }}>
                   Rain Today: <strong style={{ color: '#0f172a' }}>{zone.rainfall !== null && zone.rainfall !== undefined ? (zone.rainfall > 0 ? `${zone.rainfall} mm` : '0 mm (Dry)') : '0 mm'}</strong>
                 </div>
                 <div style={{ fontSize: 12, color: '#64748b' }}>

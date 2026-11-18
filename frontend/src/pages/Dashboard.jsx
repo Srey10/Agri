@@ -97,7 +97,7 @@ function generateActivity(zones, weather) {
   activities.push({
     icon: '🛰️', color: '#14b8a6',
     title: 'Daily Farm Satellite Scan Complete',
-    sub: `All 16 plots inspected — ${healthy.length} plots are green and healthy.`,
+    sub: `All ${zones.length} plots inspected — ${healthy.length} plots are green and healthy.`,
     time: '30 mins ago'
   })
 
@@ -169,51 +169,75 @@ export default function Dashboard({ user, field }) {
 // Fetch live rainfall + Sentinel-2 NDVI per zone
 useEffect(() => {
   const loadDashboardZones = async () => {
+    if (!partialZones || !partialZones.length) {
+      setDashZones([])
+      setZonesLoading(false)
+      return
+    }
+
     try {
+      // 1. Fetch live rainfall per zone
       const rainfallValues = await fetchRainfall(partialZones)
 
-      const ndviValues = await Promise.all(
-        partialZones.map(async (zone) => {
-          try {
-            const response = await fetch(
-              `${ML_API_URL}/ndvi`,
-              {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                  geometry: zone.geometry.geometry
-                })
-              }
-            )
-
-            const data = await response.json()
-
-            console.log(
-              `Dashboard Zone ${zone.id + 1} Sentinel NDVI:`,
-              data
-            )
-
-            return data.ndvi ?? null
-          } catch (error) {
-            console.error(
-              `Dashboard NDVI failed for zone ${zone.id + 1}:`,
-              error
-            )
-            return null
-          }
+      // 2. Fetch live Sentinel-2 / calibrated NDVI (batch query first)
+      let ndviValues = new Array(partialZones.length).fill(null)
+      try {
+        const batchRes = await fetch(`${ML_API_URL}/ndvi`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            boundary: boundary?.geometry,
+            zones: partialZones.map(z => ({
+              id: z.id,
+              geometry: z.geometry.geometry
+            }))
+          })
         })
-      )
+        if (batchRes.ok) {
+          const batchData = await batchRes.json()
+          if (Array.isArray(batchData.zones)) {
+            const mapById = {}
+            batchData.zones.forEach(bz => {
+              if (bz && bz.id !== undefined && bz.ndvi !== undefined && bz.ndvi !== null) {
+                mapById[bz.id] = bz.ndvi
+              }
+            })
+            ndviValues = partialZones.map(z => mapById[z.id] ?? null)
+          }
+        }
+      } catch (err) {
+        console.warn('Dashboard batch NDVI query failed, using individual queries:', err)
+      }
+
+      // Fallback to per-zone queries if any zone is still null
+      if (ndviValues.some(v => v === null)) {
+        const singleValues = await Promise.all(
+          partialZones.map(async (zone, i) => {
+            if (ndviValues[i] !== null) return ndviValues[i]
+            try {
+              const response = await fetch(`${ML_API_URL}/ndvi`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  geometry: zone.geometry.geometry,
+                  id: zone.id
+                })
+              })
+              const data = await response.json()
+              return data.ndvi ?? null
+            } catch (error) {
+              console.error(`Dashboard NDVI failed for zone ${zone.id + 1}:`, error)
+              return null
+            }
+          })
+        )
+        ndviValues = singleValues
+      }
 
       const enriched = partialZones.map((z, i) => {
         const rainfall = rainfallValues[i]
-        const ndvi = ndviValues[i]
-
-        const health =
-          ndvi !== null
-            ? classifyHealth(ndvi, rainfall)
-            : 'Moderate'
+        const ndvi = ndviValues[i] !== null && ndviValues[i] !== undefined ? Number(ndviValues[i]) : null
+        const health = ndvi !== null ? classifyHealth(ndvi, rainfall) : 'Moderate'
 
         return {
           ...z,
@@ -259,9 +283,11 @@ useEffect(() => {
   const openZoneModal = (zone) => {
     const isHealthy = zone.health === 'Healthy'
     const isModerate = zone.health === 'Moderate'
+    const ndviFormatted = zone.ndvi !== null && zone.ndvi !== undefined ? Number(zone.ndvi).toFixed(2) : '—'
     setSelectedPlotModal({
       zoneId: zone.id,
-      title: `Plot ${zone.id + 1} – Field Inspection`,
+      title: `Plot ${zone.id + 1} – Field Inspection (NDVI: ${ndviFormatted})`,
+      ndvi: ndviFormatted,
       tag: 'Plot Specific Advice',
       status: isHealthy ? 'Healthy (Good Growth)' : isModerate ? 'Needs Care (Mild Stress)' : 'Unhealthy (Urgent Action Needed)',
       healthClass: isHealthy ? 'healthy' : isModerate ? 'moderate' : 'problem',
@@ -306,9 +332,12 @@ useEffect(() => {
     const isHealthy = problemCount === 0 && modCount <= 1
     const isMod = problemCount === 0 && modCount > 1
 
+    const ndviVals = zoneGroup.filter(z => z.ndvi !== null && z.ndvi !== undefined).map(z => z.ndvi)
+    const blockNdvi = ndviVals.length ? (ndviVals.reduce((s, v) => s + v, 0) / ndviVals.length).toFixed(2) : '—'
     setSelectedPlotModal({
-      title: `${field.name} (${field.id})`,
+      title: `${field.name} (${field.id}) – NDVI: ${blockNdvi}`,
       tag: 'Field Block Overview',
+      ndvi: blockNdvi,
       status: isHealthy ? 'Block Healthy' : isMod ? 'Block Needs Monitoring' : 'Block At Risk',
       healthClass: isHealthy ? 'healthy' : isMod ? 'moderate' : 'problem',
       healthIcon: isHealthy ? '🌾' : isMod ? '⚠️' : '🚨',
@@ -515,7 +544,7 @@ useEffect(() => {
               ? `🚨 ${problematicCnt} plot needs urgent water/check`
               : moderateCnt > 0
               ? `⚠️ ${moderateCnt} plots need monitoring`
-              : '🟢 All 16 plots are green and growing well',
+              : `🟢 All ${dashZones.length} plots are green and growing well`,
             color: problematicCnt > 0 ? 'var(--red)' : moderateCnt > 1 ? 'var(--yellow)' : 'var(--green-accent)',
             pct: zonesLoading ? 0 : Math.round((healthyCnt / dashZones.length) * 100)
           },
@@ -606,8 +635,14 @@ useEffect(() => {
                   </div>
                   <div className="field-crop">{f.crop}</div>
                   
-                  {/* Simplified Farmer Metrics (No NDVI!) */}
+                  {/* Farmer Metrics with NDVI */}
                   <div className="field-metrics">
+                    <div className="field-metric">
+                      <span>NDVI</span>
+                      <strong style={{ color: Number(avgNdvi) >= 0.65 ? 'var(--green-accent)' : Number(avgNdvi) >= 0.40 ? 'var(--yellow)' : 'var(--red)', fontSize: 13 }}>
+                        {avgNdvi}
+                      </strong>
+                    </div>
                     <div className="field-metric">
                       <span>Condition</span>
                       <strong style={{ color: blockHealth === 'active' ? 'var(--green-accent)' : blockHealth === 'irrigated' ? 'var(--yellow)' : 'var(--red)', fontSize: 13 }}>
@@ -716,9 +751,16 @@ useEffect(() => {
             <div className="farmer-modal-body">
               <div className={`farmer-modal-status-banner ${selectedPlotModal.healthClass}`}>
                 <span className="farmer-modal-status-icon">{selectedPlotModal.healthIcon}</span>
-                <div>
-                  <strong>Condition: {selectedPlotModal.status}</strong>
-                  <p>{selectedPlotModal.cropStatus}</p>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <strong>Condition: {selectedPlotModal.status}</strong>
+                    {selectedPlotModal.ndvi && (
+                      <span className="badge badge-green" style={{ fontSize: 12 }}>
+                        NDVI: {selectedPlotModal.ndvi}
+                      </span>
+                    )}
+                  </div>
+                  <p style={{ marginTop: 4 }}>{selectedPlotModal.cropStatus}</p>
                 </div>
               </div>
 

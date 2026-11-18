@@ -17,7 +17,7 @@ export function classifyHealth(ndvi, rainfall) {
     if (ndvi >= 0.40) return 'Moderate'
     return 'Problematic'
   }
-  if (ndvi >= 0.65 && rainfall >= 3) return 'Healthy'
+  if (ndvi >= 0.65) return 'Healthy'
   if (ndvi < 0.40 && rainfall < 1) return 'Problematic'
   return 'Moderate'
 }
@@ -32,6 +32,7 @@ export function healthColor(status) {
 // farm size, so a 1 ha plot and a 50 ha farm both produce a handful of zones (and API calls).
 // NDVI and rainfall start empty and are filled from live data; soil type is not measured, so it is null.
 export function buildZones(farmBoundary) {
+  if (!farmBoundary?.geometry?.coordinates?.[0]?.length) return []
   const [minX, minY, maxX, maxY] = turf.bbox(farmBoundary)
   const extent = Math.max(maxX - minX, maxY - minY)
   // Slightly oversized cells and a padded origin, so rounding in squareGrid can't leave an uncovered edge strip.
@@ -102,61 +103,85 @@ export default function GISMapping({ user, field }) {
 
   useEffect(() => {
   const loadGISData = async () => {
-    const partial = buildZones(boundary)
+    if (!boundary) {
+      setZones([])
+      setLoading(false)
+      return
+    }
 
+    const partial = buildZones(boundary)
     setZones(partial)
     setLoading(true)
 
+    if (!partial.length) {
+      setLoading(false)
+      return
+    }
+
     try {
-      // Get rainfall
+      // 1. Fetch live rainfall per zone
       const rainfallValues = await fetchRainfall(partial)
 
-      // Get real Sentinel-2 NDVI for every zone
-      const ndviValues = await Promise.all(
-        partial.map(async (zone) => {
-          try {
-            const response = await fetch(
-              `${ML_API_URL}/ndvi`,
-              {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                  geometry: zone.geometry.geometry
-                })
-              }
-            )
-
-            const data = await response.json()
-
-            console.log(
-              `Zone ${zone.id + 1} Sentinel NDVI:`,
-              data
-            )
-
-            return data.ndvi ?? null
-          } catch (error) {
-            console.error(
-              `NDVI failed for zone ${zone.id + 1}:`,
-              error
-            )
-
-            return null
-          }
+      // 2. Fetch live Sentinel-2 / calibrated NDVI for all zones (batch request first)
+      let ndviValues = new Array(partial.length).fill(null)
+      try {
+        const batchResponse = await fetch(`${ML_API_URL}/ndvi`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            boundary: boundary?.geometry,
+            zones: partial.map(z => ({
+              id: z.id,
+              geometry: z.geometry.geometry
+            }))
+          })
         })
-      )
+        if (batchResponse.ok) {
+          const batchData = await batchResponse.json()
+          if (Array.isArray(batchData.zones)) {
+            const mapById = {}
+            batchData.zones.forEach(bz => {
+              if (bz && bz.id !== undefined && bz.ndvi !== undefined && bz.ndvi !== null) {
+                mapById[bz.id] = bz.ndvi
+              }
+            })
+            ndviValues = partial.map((z, i) => mapById[z.id] ?? null)
+          }
+        }
+      } catch (err) {
+        console.warn('Batch NDVI query failed, using individual zone queries:', err)
+      }
+
+      // Fallback to single queries if any zone is still null
+      if (ndviValues.some(v => v === null)) {
+        const singleValues = await Promise.all(
+          partial.map(async (zone, i) => {
+            if (ndviValues[i] !== null) return ndviValues[i]
+            try {
+              const res = await fetch(`${ML_API_URL}/ndvi`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  geometry: zone.geometry.geometry,
+                  id: zone.id
+                })
+              })
+              const d = await res.json()
+              return d.ndvi ?? null
+            } catch (e) {
+              console.error(`NDVI failed for zone ${zone.id + 1}:`, e)
+              return null
+            }
+          })
+        )
+        ndviValues = singleValues
+      }
 
       // Combine Sentinel NDVI + rainfall
       const enriched = partial.map((z, i) => {
-
         const rainfall = rainfallValues[i]
-        const ndvi = ndviValues[i]
-
-        const health =
-          ndvi !== null
-            ? classifyHealth(ndvi, rainfall)
-            : 'Moderate'
+        const ndvi = ndviValues[i] !== null && ndviValues[i] !== undefined ? Number(ndviValues[i]) : null
+        const health = ndvi !== null ? classifyHealth(ndvi, rainfall) : 'Moderate'
 
         return {
           ...z,
@@ -168,18 +193,10 @@ export default function GISMapping({ user, field }) {
       })
 
       setZones(enriched)
-
     } catch (error) {
-
-      console.error(
-        'GIS data loading failed:',
-        error
-      )
-
+      console.error('GIS data loading failed:', error)
     } finally {
-
       setLoading(false)
-
     }
   }
 
@@ -274,6 +291,41 @@ export default function GISMapping({ user, field }) {
               </>
             )}
           </div>
+
+          {/* Field Plots & NDVI List */}
+          <div className="card" style={{ marginTop: 14 }}>
+            <div className="card-section-title" style={{ marginBottom: 10 }}>🌾 Plot NDVI Scores</div>
+            {loading ? (
+              <div className="gis-loading">
+                <div className="gis-loading-row"></div>
+                <div className="gis-loading-row"></div>
+              </div>
+            ) : zones.length === 0 ? (
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '10px 0' }}>No mapped plots</div>
+            ) : (
+              <div className="field-list">
+                {zones.map((z) => (
+                  <div
+                    key={z.id}
+                    className={`field-list-item ${selectedZone?.id === z.id ? 'active' : ''}`}
+                    onClick={() => setSelectedZone(z)}
+                  >
+                    <div className="field-list-dot" style={{ background: z.color || '#eab308' }} />
+                    <div className="field-list-info">
+                      <div className="field-list-id">Plot {z.id + 1}</div>
+                      <div className="field-list-crop">{z.areaHa} Ha · {z.health}</div>
+                    </div>
+                    <div
+                      className="field-list-ndvi"
+                      style={{ color: z.ndvi >= 0.65 ? 'var(--green-accent)' : z.ndvi >= 0.40 ? 'var(--yellow)' : 'var(--red)' }}
+                    >
+                      {z.ndvi !== null && z.ndvi !== undefined ? Number(z.ndvi).toFixed(2) : '—'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Map Column */}
@@ -323,15 +375,15 @@ export default function GISMapping({ user, field }) {
                   {[
                     {
                       label: 'NDVI',
-                      val: selectedZone.ndvi?.toFixed(2) ?? 'N/A',
+                      val: selectedZone.ndvi !== null && selectedZone.ndvi !== undefined ? Number(selectedZone.ndvi).toFixed(2) : '—',
                       unit: '',
-                      color: selectedZone.ndvi >= 0.65 ? 'var(--green-accent)' : selectedZone.ndvi >= 0.40 ? 'var(--yellow)' : 'var(--red)'
+                      color: selectedZone.ndvi == null ? 'var(--text-muted)' : selectedZone.ndvi >= 0.65 ? 'var(--green-accent)' : selectedZone.ndvi >= 0.40 ? 'var(--yellow)' : 'var(--red)'
                     },
                     { label: 'Area', val: selectedZone.areaHa, unit: ' Ha', color: 'var(--blue)' },
                     {
                       label: 'Rainfall',
-                      val: selectedZone.rainfall !== null && selectedZone.rainfall !== undefined ? selectedZone.rainfall : 'N/A',
-                      unit: selectedZone.rainfall !== null && selectedZone.rainfall !== undefined ? ' mm' : '',
+                      val: selectedZone.rainfall !== null && selectedZone.rainfall !== undefined ? selectedZone.rainfall : '0',
+                      unit: ' mm',
                       color: 'var(--teal)'
                     },
                   ].map(m => (
@@ -343,11 +395,11 @@ export default function GISMapping({ user, field }) {
                 </div>
 
                 <div style={{ marginTop: 14 }}>
-                  <div className="card-section-title">NDVI Health</div>
+                  <div className="card-section-title">NDVI Vegetation Score ({selectedZone.ndvi !== null && selectedZone.ndvi !== undefined ? Number(selectedZone.ndvi).toFixed(2) : '—'})</div>
                   <div className="progress-bar" style={{ marginTop: 8 }}>
                     <div className="progress-fill" style={{
-                      width: `${(selectedZone.ndvi || 0) * 100}%`,
-                      background: `linear-gradient(90deg, ${
+                      width: `${Math.max(0, Math.min(100, ((selectedZone.ndvi ?? 0.5) * 100)))}%`,
+                      background: selectedZone.ndvi == null ? 'var(--border)' : `linear-gradient(90deg, ${
                         selectedZone.ndvi >= 0.65 ? 'var(--green-primary)' :
                         selectedZone.ndvi >= 0.40 ? '#92400e' : '#7f1d1d'
                       }, ${
@@ -357,8 +409,8 @@ export default function GISMapping({ user, field }) {
                     }} />
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-                    <span className="text-sm text-muted">0</span>
-                    <span className="text-sm text-muted">1.0</span>
+                    <span className="text-sm text-muted">0.0 (Bare/Dry)</span>
+                    <span className="text-sm text-muted">1.0 (Dense Green)</span>
                   </div>
                 </div>
                 <div style={{ marginTop: 14 }}>
