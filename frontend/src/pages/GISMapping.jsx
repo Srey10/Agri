@@ -10,7 +10,7 @@ import { ML_API_URL } from '../data/api'
 
 // Farm boundary fallback helper or exports if needed
 export { boundaryAreaHa }
-// eslint-disable-next-line react-refresh/only-export-components
+
 export function classifyHealth(ndvi, rainfall) {
   if (rainfall === null || rainfall === undefined) {
     if (ndvi >= 0.65) return 'Healthy'
@@ -22,7 +22,7 @@ export function classifyHealth(ndvi, rainfall) {
   return 'Moderate'
 }
 
-// eslint-disable-next-line react-refresh/only-export-components
+
 export function healthColor(status) {
   const colors = { Healthy: '#22c55e', Moderate: '#eab308', Problematic: '#ef4444' }
   return colors[status]
@@ -76,7 +76,7 @@ export function buildZones(farmBoundary) {
   return zones
 }
 
-// eslint-disable-next-line react-refresh/only-export-components
+
 export async function fetchRainfall(zones) {
   const results = await Promise.all(
     zones.map(z =>
@@ -145,7 +145,7 @@ export default function GISMapping({ user, field }) {
                 mapById[bz.id] = bz.ndvi
               }
             })
-            ndviValues = partial.map((z, i) => mapById[z.id] ?? null)
+            ndviValues = partial.map(z => mapById[z.id] ?? null)
           }
         }
       } catch (err) {

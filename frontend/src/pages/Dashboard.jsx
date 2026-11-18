@@ -257,7 +257,7 @@ useEffect(() => {
   }
 
   loadDashboardZones()
-}, [partialZones])
+}, [partialZones, boundary?.geometry])
 
   const healthyCnt = dashZones.filter(z => z.health === 'Healthy').length
   const moderateCnt = dashZones.filter(z => z.health === 'Moderate').length
@@ -606,6 +606,8 @@ useEffect(() => {
           <div className="fields-row">
             {buildFieldCards(farm, dashZones.length).map((f, i) => {
               const zoneGroup = dashZones.slice(i * Math.ceil(dashZones.length / 3), (i + 1) * Math.ceil(dashZones.length / 3))
+              const ndviVals = zoneGroup.filter(z => z.ndvi !== null && z.ndvi !== undefined).map(z => Number(z.ndvi))
+              const avgNdvi = ndviVals.length ? (ndviVals.reduce((s, v) => s + v, 0) / ndviVals.length).toFixed(2) : '—'
               const avgRain = zoneGroup.length && zoneGroup[0].rainfall !== null
                 ? (zoneGroup.reduce((s, z) => s + (z.rainfall || 0), 0) / zoneGroup.length).toFixed(1)
                 : '0'

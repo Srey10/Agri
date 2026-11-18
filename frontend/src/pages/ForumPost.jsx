@@ -22,7 +22,9 @@ export default function ForumPost({ user }) {
     getPostById(id).then(setPost).catch(() => setNotFound(true))
   }
 
-  useEffect(load, [id])
+  useEffect(() => {
+    getPostById(id).then(setPost).catch(() => setNotFound(true))
+  }, [id])
   useEffect(() => { getCategories().then(setCategories).catch(() => {}) }, [])
 
   if (notFound) { navigate('/forum'); return null }
@@ -31,12 +33,22 @@ export default function ForumPost({ user }) {
   const categoryName = categories.find(c => c.id === post.categoryId)?.name || post.categoryId
 
   const handleLike = () => {
+    if (!user) {
+      setReportBanner('Please log in to like posts.')
+      setTimeout(() => setReportBanner(''), 3000)
+      return
+    }
     toggleLike(post.id).then(load).catch(() => {})
   }
 
   const handleComment = (e) => {
     e.preventDefault()
     if (!commentText.trim()) return
+    if (!user) {
+      setReportBanner('Please log in to post a comment.')
+      setTimeout(() => setReportBanner(''), 3000)
+      return
+    }
     addComment(post.id, { content: commentText, parentId: replyTo })
       .then(() => { setCommentText(''); setReplyTo(null); load() })
       .catch(() => {})
